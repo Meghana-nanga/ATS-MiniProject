@@ -4,6 +4,7 @@ const {
   getProfile,
   updateProfile,
   applyToHR,
+  getApplicationStatus,
   runAtsAnalysis,
   runVideoAnalysis,
 } = require("../controllers/userController");
@@ -11,10 +12,11 @@ const { protect } = require("../middleware/auth");
 
 router.use(protect);
 
-router.get ("/profile",    getProfile);
-router.put ("/profile",    updateProfile);
-router.post("/apply",      applyToHR);        // KEY: triggers appearance in HR dashboard
-router.post("/ats",        runAtsAnalysis);
-router.post("/video",      runVideoAnalysis);
+router.get ("/profile",            getProfile);
+router.put ("/profile",            updateProfile);
+router.post("/apply",              applyToHR);           // KEY: triggers appearance in HR dashboard
+router.get ("/application-status", getApplicationStatus); // NEW: get HR application status
+router.post("/ats",                runAtsAnalysis);
+router.post("/video",              runVideoAnalysis);
 
 module.exports = router;

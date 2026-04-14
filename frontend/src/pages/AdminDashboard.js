@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { adminAPI } from "../utils/api";
+import { adminAPI, interviewAPI } from "../utils/api";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 
 function initials(n=""){ return n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2); }
@@ -114,6 +114,19 @@ export default function AdminDashboard() {
   const [alerts, setAlerts]               = useState([]);
   const [unreadCount, setUnreadCount]     = useState(0);
 
+  // Interview scheduling state
+  const [interviews, setInterviews]           = useState([]);
+  const [interviewLoading, setInterviewLoading] = useState(false);
+  const [scheduleModal, setScheduleModal]     = useState(null); // candidate object
+  const [outcomeModal, setOutcomeModal]       = useState(null); // interview object
+  const [rescheduleModal, setRescheduleModal] = useState(null); // interview object
+  const [scheduleForm, setScheduleForm]       = useState({
+    date:"", time:"", mode:"Video Call", location:"", round:"HR Round", notes:"", jobTitle:""
+  });
+  const [outcomeForm, setOutcomeForm]         = useState({ outcome:"Hired", offerDetails:"", notes:"" });
+  const [rescheduleForm, setRescheduleForm]   = useState({ date:"", time:"", mode:"Video Call", location:"", notes:"" });
+  const [interviewSaving, setInterviewSaving] = useState(false);
+
   const showToast = (msg, type="success") => {
     setToast(msg); setToastType(type);
     setTimeout(()=>setToast(""), 3500);
@@ -211,7 +224,79 @@ export default function AdminDashboard() {
 
   useEffect(()=>{ loadRankings(); loadAnalytics(); },[]);
   useEffect(()=>{ if(tab==="candidates") loadCandidates(); },[tab,loadCandidates]);
+  useEffect(()=>{ if(tab==="interviews") loadInterviews(); },[tab]);
   useEffect(()=>{ if(rankings.length>0||fraudCandidates.length>0) buildAlerts(rankings, fraudCandidates); },[rankings,fraudCandidates,buildAlerts]);
+
+  const loadInterviews = async () => {
+    setInterviewLoading(true);
+    try {
+      const { data } = await interviewAPI.getAll();
+      setInterviews(data.interviews || []);
+    } catch(e) { showToast("Could not load interviews","error"); }
+    finally { setInterviewLoading(false); }
+  };
+
+  const handleScheduleInterview = async () => {
+    if (!scheduleForm.date || !scheduleForm.time) return showToast("Date and time are required","error");
+    setInterviewSaving(true);
+    try {
+      const dateTime = new Date(`${scheduleForm.date}T${scheduleForm.time}`).toISOString();
+      await interviewAPI.schedule({
+        candidateId: scheduleModal._id,
+        date:        dateTime,
+        mode:        scheduleForm.mode,
+        location:    scheduleForm.location,
+        round:       scheduleForm.round,
+        notes:       scheduleForm.notes,
+        jobTitle:    scheduleForm.jobTitle || scheduleModal.targetRole || "Open Position",
+      });
+      showToast("✅ Interview scheduled & email sent!");
+      setScheduleModal(null);
+      setScheduleForm({ date:"", time:"", mode:"Video Call", location:"", round:"HR Round", notes:"", jobTitle:"" });
+      loadInterviews(); loadCandidates();
+    } catch(e) { showToast(e.response?.data?.message || "Failed to schedule","error"); }
+    finally { setInterviewSaving(false); }
+  };
+
+  const handleRecordOutcome = async () => {
+    setInterviewSaving(true);
+    try {
+      await interviewAPI.recordOutcome(outcomeModal._id, {
+        outcome:      outcomeForm.outcome,
+        offerDetails: outcomeForm.offerDetails,
+        notes:        outcomeForm.notes,
+      });
+      const msg = outcomeForm.outcome === "Hired"
+        ? "🎊 Offer letter sent to candidate!"
+        : outcomeForm.outcome === "Rejected"
+        ? "Rejection email sent to candidate."
+        : "✅ Next round email sent!";
+      showToast(msg);
+      setOutcomeModal(null);
+      setOutcomeForm({ outcome:"Hired", offerDetails:"", notes:"" });
+      loadInterviews(); loadCandidates();
+    } catch(e) { showToast(e.response?.data?.message || "Failed","error"); }
+    finally { setInterviewSaving(false); }
+  };
+
+  const handleReschedule = async () => {
+    if (!rescheduleForm.date || !rescheduleForm.time) return showToast("Date and time required","error");
+    setInterviewSaving(true);
+    try {
+      const dateTime = new Date(`${rescheduleForm.date}T${rescheduleForm.time}`).toISOString();
+      await interviewAPI.update(rescheduleModal._id, {
+        date:     dateTime,
+        mode:     rescheduleForm.mode,
+        location: rescheduleForm.location,
+        notes:    rescheduleForm.notes,
+        status:   "Rescheduled",
+      });
+      showToast("📅 Rescheduled & email sent!");
+      setRescheduleModal(null);
+      loadInterviews();
+    } catch(e) { showToast("Failed to reschedule","error"); }
+    finally { setInterviewSaving(false); }
+  };
 
   const handleStatusChange = async(id, status, extra={}) => {
     try{
@@ -290,10 +375,11 @@ export default function AdminDashboard() {
   };
 
   const tabs=[
-    {id:"rankings",  icon:"🏆", label:"Rankings"},
-    {id:"candidates",icon:"👥", label:"Candidates"},
-    {id:"analytics", icon:"📈", label:"Analytics"},
-    {id:"alerts",    icon:"🔔", label:"Alerts", badge:unreadCount},
+    {id:"rankings",   icon:"🏆", label:"Rankings"},
+    {id:"candidates", icon:"👥", label:"Candidates"},
+    {id:"interviews", icon:"📅", label:"Interviews"},
+    {id:"analytics",  icon:"📈", label:"Analytics"},
+    {id:"alerts",     icon:"🔔", label:"Alerts", badge:unreadCount},
   ];
 
   return (
@@ -519,6 +605,14 @@ export default function AdminDashboard() {
                           <td style={{fontSize:12.5,color:"var(--muted)"}}>{new Date(c.createdAt).toLocaleDateString()}</td>
                           <td>
                             <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                              {/* Schedule Interview */}
+                              {c.isActive && (c.status==="Shortlisted"||c.status==="Under Review") && (
+                                <button className="btn btn-sm"
+                                  style={{background:"#EFF4FF",color:"#1347C4",border:"1px solid #BFCFFD"}}
+                                  onClick={()=>{ setScheduleModal(c); setScheduleForm(f=>({...f,jobTitle:c.targetRole||""})); }}>
+                                  📅 Schedule
+                                </button>
+                              )}
                               {/* Shortlist */}
                               {c.isActive && c.status!=="Shortlisted" && (
                                 <button className="btn btn-sm btn-success"
@@ -636,6 +730,119 @@ export default function AdminDashboard() {
           )}
 
           {/* ── ALERTS — real data, fraud escalation to superadmin ── */}
+          {tab==="interviews"&&(
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
+                <div>
+                  <h2 style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,marginBottom:4}}>Interview Pipeline</h2>
+                  <p style={{fontSize:14,color:"var(--muted)"}}>{interviews.length} total · {interviews.filter(i=>i.status==="Scheduled").length} upcoming · {interviews.filter(i=>i.outcome==="Hired").length} hired</p>
+                </div>
+                <button className="btn btn-outline btn-sm" onClick={loadInterviews}>↺ Refresh</button>
+              </div>
+
+              {/* Pipeline summary */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:20}}>
+                {[
+                  ["📅","Scheduled",  interviews.filter(i=>i.status==="Scheduled").length,  "#1B5EEA","#EFF4FF","#BFCFFD"],
+                  ["✅","Completed",  interviews.filter(i=>i.status==="Completed").length,   "#059669","#ECFDF5","#6EE7B7"],
+                  ["🎊","Hired",      interviews.filter(i=>i.outcome==="Hired").length,      "#7C3AED","#F5F3FF","#C4B5FD"],
+                  ["❌","Rejected",   interviews.filter(i=>i.outcome==="Rejected").length,   "#DC2626","#FEF2F2","#FECACA"],
+                  ["🔁","Rescheduled",interviews.filter(i=>i.status==="Rescheduled").length, "#D97706","#FFFBEB","#FDE68A"],
+                ].map(([icon,label,count,color,bg,border])=>(
+                  <div key={label} style={{background:bg,border:`1px solid ${border}`,borderRadius:"var(--r16)",padding:"16px 18px",textAlign:"center"}}>
+                    <div style={{fontSize:22,marginBottom:4}}>{icon}</div>
+                    <div style={{fontFamily:"Fraunces,serif",fontSize:26,fontWeight:700,color,lineHeight:1}}>{count}</div>
+                    <div style={{fontSize:12,color,fontWeight:600,marginTop:4}}>{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {interviewLoading ? (
+                <div style={{textAlign:"center",padding:"60px 24px"}}><div className="spinner"></div></div>
+              ) : interviews.length === 0 ? (
+                <div className="card" style={{textAlign:"center",padding:"60px 24px"}}>
+                  <div style={{fontSize:48,marginBottom:16}}>📅</div>
+                  <h3 style={{fontSize:17,marginBottom:8}}>No interviews scheduled yet</h3>
+                  <p style={{color:"var(--muted)",fontSize:14,marginBottom:20}}>Shortlist a candidate and click "📅 Schedule" to get started.</p>
+                  <button className="btn btn-outline" onClick={()=>setTab("candidates")}>Go to Candidates →</button>
+                </div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  {interviews.map(iv=>{
+                    const c = iv.candidate || {};
+                    const isPast = new Date(iv.date) < new Date();
+                    const statusColor = iv.status==="Scheduled"?"#1B5EEA":iv.status==="Completed"?"#059669":iv.status==="Rescheduled"?"#D97706":"#DC2626";
+                    const outcomeColor = iv.outcome==="Hired"?"#059669":iv.outcome==="Rejected"?"#DC2626":iv.outcome==="Next Round"?"#7C3AED":"#94A3B8";
+                    return (
+                      <div key={iv._id} className="card" style={{padding:0,overflow:"hidden",border:`1.5px solid ${iv.outcome==="Hired"?"#6EE7B7":iv.outcome==="Rejected"?"#FECACA":"var(--border)"}`}}>
+                        {/* Top bar */}
+                        <div style={{height:4,background:iv.outcome==="Hired"?"#059669":iv.outcome==="Rejected"?"#DC2626":iv.status==="Scheduled"?"#1B5EEA":"#D97706"}}></div>
+                        <div style={{padding:"18px 24px",display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
+                          {/* Avatar */}
+                          <div className={`avatar ${AVC[0]}`} style={{width:42,height:42,fontSize:14,flexShrink:0}}>{initials(c.name||"?")}</div>
+                          {/* Candidate info */}
+                          <div style={{flex:1,minWidth:160}}>
+                            <div style={{fontWeight:700,fontSize:15}}>{c.name||"Unknown"}</div>
+                            <div style={{fontSize:12,color:"var(--muted)"}}>{c.email}</div>
+                            <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
+                              {iv.jobTitle} · <span style={{fontWeight:600,color:"#7C3AED"}}>{iv.round}</span>
+                            </div>
+                          </div>
+                          {/* Date/time */}
+                          <div style={{textAlign:"center",minWidth:110}}>
+                            <div style={{fontSize:13,fontWeight:700,color:isPast&&iv.status==="Scheduled"?"#DC2626":"var(--text)"}}>
+                              {new Date(iv.date).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}
+                            </div>
+                            <div style={{fontSize:12,color:"var(--muted)"}}>
+                              {new Date(iv.date).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}
+                            </div>
+                            <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+                              {iv.mode==="Video Call"?"💻":iv.mode==="Phone"?"📞":"🏢"} {iv.mode}
+                            </div>
+                          </div>
+                          {/* Status + outcome */}
+                          <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
+                            <span style={{background:`${statusColor}18`,color:statusColor,borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>{iv.status}</span>
+                            {iv.outcome!=="Pending" && (
+                              <span style={{background:`${outcomeColor}18`,color:outcomeColor,borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>{iv.outcome==="Hired"?"🎊 "+iv.outcome:iv.outcome==="Rejected"?"❌ "+iv.outcome:"🔁 "+iv.outcome}</span>
+                            )}
+                          </div>
+                          {/* Actions */}
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                            {iv.status==="Scheduled" && iv.outcome==="Pending" && (
+                              <>
+                                <button className="btn btn-sm btn-success" onClick={()=>{setOutcomeModal(iv);setOutcomeForm({outcome:"Hired",offerDetails:"",notes:""});}}>
+                                  Record Outcome
+                                </button>
+                                <button className="btn btn-sm btn-outline" onClick={()=>{setRescheduleModal(iv);setRescheduleForm({date:"",time:"",mode:iv.mode,location:iv.location||"",notes:""});}}>
+                                  📅 Reschedule
+                                </button>
+                              </>
+                            )}
+                            {iv.outcome==="Next Round" && (
+                              <button className="btn btn-sm" style={{background:"#F5F3FF",color:"#7C3AED",border:"1px solid #C4B5FD"}}
+                                onClick={()=>{ setScheduleModal(iv.candidate); setScheduleForm(f=>({...f,jobTitle:iv.jobTitle,round:"Technical Round"})); }}>
+                                📅 Schedule Next
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {/* Notes strip */}
+                        {(iv.notes||iv.location) && (
+                          <div style={{padding:"8px 24px 12px",borderTop:"1px solid var(--border)",display:"flex",gap:16,fontSize:12.5,color:"var(--muted)",flexWrap:"wrap"}}>
+                            {iv.location && <span>📍 {iv.location}</span>}
+                            {iv.notes    && <span>📝 {iv.notes}</span>}
+                            {iv.offerDetails && <span style={{color:"#059669",fontWeight:600}}>💼 {iv.offerDetails}</span>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {tab==="alerts"&&(
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
@@ -771,6 +978,170 @@ export default function AdminDashboard() {
             <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:20}}>
               <button className="btn btn-ghost" onClick={()=>setModal(null)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleAdd}>Add Candidate</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Schedule Interview Modal ── */}
+      {scheduleModal && (
+        <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setScheduleModal(null)}}>
+          <div className="modal-box" style={{maxWidth:520}}>
+            <div className="modal-hd">
+              <span className="modal-title">📅 Schedule Interview — {scheduleModal.name}</span>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setScheduleModal(null)}>✕</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
+              <div className="form-group">
+                <label className="form-label">Date *</label>
+                <input className="form-input" type="date" min={new Date().toISOString().split("T")[0]}
+                  value={scheduleForm.date} onChange={e=>setScheduleForm(f=>({...f,date:e.target.value}))}/>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Time *</label>
+                <input className="form-input" type="time"
+                  value={scheduleForm.time} onChange={e=>setScheduleForm(f=>({...f,time:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Job Title</label>
+              <input className="form-input" placeholder="e.g. Backend Developer"
+                value={scheduleForm.jobTitle} onChange={e=>setScheduleForm(f=>({...f,jobTitle:e.target.value}))}/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div className="form-group">
+                <label className="form-label">Round</label>
+                <select className="form-select" value={scheduleForm.round} onChange={e=>setScheduleForm(f=>({...f,round:e.target.value}))}>
+                  {["HR Round","Technical Round","Managerial Round","Final Round"].map(r=><option key={r}>{r}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Mode</label>
+                <select className="form-select" value={scheduleForm.mode} onChange={e=>setScheduleForm(f=>({...f,mode:e.target.value}))}>
+                  {["Video Call","In-Person","Phone"].map(m=><option key={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">{scheduleForm.mode==="Video Call"?"Meet Link / Platform":"Location / Room"}</label>
+              <input className="form-input" placeholder={scheduleForm.mode==="Video Call"?"https://meet.google.com/...":"Conference Room B"}
+                value={scheduleForm.location} onChange={e=>setScheduleForm(f=>({...f,location:e.target.value}))}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Notes for Candidate</label>
+              <textarea className="form-input" rows={2} placeholder="Any instructions or prep tips..."
+                value={scheduleForm.notes} onChange={e=>setScheduleForm(f=>({...f,notes:e.target.value}))}/>
+            </div>
+            <div style={{background:"#EFF4FF",borderRadius:"var(--r8)",padding:"10px 14px",fontSize:13,color:"#1347C4",marginBottom:16}}>
+              📧 An interview confirmation email will be sent automatically to <strong>{scheduleModal.email}</strong>
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button className="btn btn-ghost" onClick={()=>setScheduleModal(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleScheduleInterview} disabled={interviewSaving}>
+                {interviewSaving?"Scheduling...":"📅 Schedule & Send Email"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Record Outcome Modal ── */}
+      {outcomeModal && (
+        <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setOutcomeModal(null)}}>
+          <div className="modal-box" style={{maxWidth:500}}>
+            <div className="modal-hd">
+              <span className="modal-title">Record Interview Outcome</span>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setOutcomeModal(null)}>✕</button>
+            </div>
+            <div style={{background:"var(--bg)",borderRadius:"var(--r8)",padding:"12px 16px",marginBottom:16,fontSize:13}}>
+              <strong>{outcomeModal.candidate?.name}</strong> · {outcomeModal.round} · {outcomeModal.jobTitle}
+            </div>
+            <div className="form-group">
+              <label className="form-label">Outcome *</label>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                {[["Hired","🎊","#059669","#ECFDF5","#6EE7B7"],["Rejected","❌","#DC2626","#FEF2F2","#FECACA"],["Next Round","🔁","#7C3AED","#F5F3FF","#C4B5FD"]].map(([val,icon,color,bg,border])=>(
+                  <button key={val}
+                    onClick={()=>setOutcomeForm(f=>({...f,outcome:val}))}
+                    style={{flex:1,padding:"14px 10px",borderRadius:"var(--r12)",border:`2px solid ${outcomeForm.outcome===val?color:border}`,background:outcomeForm.outcome===val?bg:"var(--card)",color,fontWeight:700,fontSize:14,cursor:"pointer",transition:".15s"}}>
+                    {icon} {val}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {outcomeForm.outcome==="Hired" && (
+              <div className="form-group">
+                <label className="form-label">Offer Details (salary, joining date, etc.)</label>
+                <textarea className="form-input" rows={3} placeholder={"e.g.\nRole: Backend Developer\nSalary: ₹8 LPA\nJoining Date: 1st June 2026\nLocation: Hyderabad (Hybrid)"}
+                  value={outcomeForm.offerDetails} onChange={e=>setOutcomeForm(f=>({...f,offerDetails:e.target.value}))}/>
+              </div>
+            )}
+            <div className="form-group">
+              <label className="form-label">{outcomeForm.outcome==="Rejected"?"Feedback for Candidate":"Additional Note"}</label>
+              <textarea className="form-input" rows={2} placeholder={outcomeForm.outcome==="Rejected"?"Constructive feedback to include in the rejection email...":"Any notes..."}
+                value={outcomeForm.notes} onChange={e=>setOutcomeForm(f=>({...f,notes:e.target.value}))}/>
+            </div>
+            <div style={{background:outcomeForm.outcome==="Hired"?"#ECFDF5":outcomeForm.outcome==="Rejected"?"#FEF2F2":"#F5F3FF",borderRadius:"var(--r8)",padding:"10px 14px",fontSize:13,color:outcomeForm.outcome==="Hired"?"#065F46":outcomeForm.outcome==="Rejected"?"#991B1B":"#4C1D95",marginBottom:16}}>
+              📧 {outcomeForm.outcome==="Hired"?"An offer letter will be emailed to the candidate.":outcomeForm.outcome==="Rejected"?"A professional rejection email will be sent.":"A 'next round' notification email will be sent."}
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button className="btn btn-ghost" onClick={()=>setOutcomeModal(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleRecordOutcome} disabled={interviewSaving}>
+                {interviewSaving?"Saving...":outcomeForm.outcome==="Hired"?"🎊 Confirm & Send Offer":outcomeForm.outcome==="Rejected"?"❌ Confirm & Send Rejection":"🔁 Confirm & Advance"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reschedule Modal ── */}
+      {rescheduleModal && (
+        <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setRescheduleModal(null)}}>
+          <div className="modal-box" style={{maxWidth:460}}>
+            <div className="modal-hd">
+              <span className="modal-title">📅 Reschedule Interview</span>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setRescheduleModal(null)}>✕</button>
+            </div>
+            <div style={{background:"var(--bg)",borderRadius:"var(--r8)",padding:"10px 14px",marginBottom:14,fontSize:13}}>
+              <strong>{rescheduleModal.candidate?.name}</strong> · {rescheduleModal.round}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div className="form-group">
+                <label className="form-label">New Date *</label>
+                <input className="form-input" type="date" min={new Date().toISOString().split("T")[0]}
+                  value={rescheduleForm.date} onChange={e=>setRescheduleForm(f=>({...f,date:e.target.value}))}/>
+              </div>
+              <div className="form-group">
+                <label className="form-label">New Time *</label>
+                <input className="form-input" type="time"
+                  value={rescheduleForm.time} onChange={e=>setRescheduleForm(f=>({...f,time:e.target.value}))}/>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div className="form-group">
+                <label className="form-label">Mode</label>
+                <select className="form-select" value={rescheduleForm.mode} onChange={e=>setRescheduleForm(f=>({...f,mode:e.target.value}))}>
+                  {["Video Call","In-Person","Phone"].map(m=><option key={m}>{m}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Location / Link</label>
+                <input className="form-input" placeholder="Meet link or room"
+                  value={rescheduleForm.location} onChange={e=>setRescheduleForm(f=>({...f,location:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Reason / Note</label>
+              <textarea className="form-input" rows={2} placeholder="Reason for rescheduling (optional)..."
+                value={rescheduleForm.notes} onChange={e=>setRescheduleForm(f=>({...f,notes:e.target.value}))}/>
+            </div>
+            <div style={{background:"#EFF4FF",borderRadius:"var(--r8)",padding:"10px 14px",fontSize:13,color:"#1347C4",marginBottom:16}}>
+              📧 A reschedule notification email will be sent to the candidate.
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button className="btn btn-ghost" onClick={()=>setRescheduleModal(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleReschedule} disabled={interviewSaving}>
+                {interviewSaving?"Saving...":"📅 Reschedule & Notify"}
+              </button>
             </div>
           </div>
         </div>

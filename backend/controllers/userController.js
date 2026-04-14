@@ -9,8 +9,8 @@
  */
 const User    = require("../models/User");
 const Resume  = require("../models/Resume");
-const { analyzeResume }       = require("../services/atsService");
-const { analyzeVideo }        = require("../services/videoAnalysisService");
+const { analyzeResume }  = require("../ml/atsEngine");       // same engine as resumeController
+const { analyzeVideo }   = require("../services/videoAnalysisService");
 
 // ── GET PROFILE ───────────────────────────────────────────────────────────────
 exports.getProfile = async (req, res) => {
@@ -65,33 +65,49 @@ exports.applyToHR = async (req, res) => {
 // ── RUN ATS ANALYSIS ──────────────────────────────────────────────────────────
 exports.runAtsAnalysis = async (req, res) => {
   try {
-    const { resumeText, jobDescription } = req.body;
+    const { resumeText, jobDescription, jobTitle } = req.body;
     if (!resumeText || resumeText.trim().length < 50) {
       return res.status(400).json({ success: false, message: "Resume text is too short. Paste the full resume text." });
     }
 
-    const result = analyzeResume(resumeText, jobDescription || "");
+    const result = await analyzeResume(resumeText, jobDescription || "", jobTitle || "");
 
-    if (result.error) {
-      return res.status(400).json({ success: false, message: result.error });
+    if (!result || result.atsScore === undefined) {
+      return res.status(400).json({ success: false, message: "Analysis failed. Please try again." });
     }
 
-    // Save score to user profile
+    // Save score to user profile — same field admin sees
     await User.findByIdAndUpdate(req.user._id, {
-      lastAtsScore:  result.score,
+      lastAtsScore:  result.atsScore,
       $inc: { totalAnalyses: 1 },
+      ...(result.fraud?.isFraudSuspected ? { isFraudFlagged: true } : {}),
     });
 
-    // Optionally save resume record
-    if (resumeText) {
-      await Resume.findOneAndUpdate(
-        { user: req.user._id },
-        { user: req.user._id, text: resumeText, atsScore: result.score, jobDescription },
-        { upsert: true, new: true }
-      );
-    }
-
     res.json({ success: true, analysis: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ── GET MY APPLICATION STATUS ─────────────────────────────────────────────────
+exports.getApplicationStatus = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select("name email status appliedToHR appliedAt interviewDate notes targetRole lastAtsScore")
+      .lean();
+    if (!user) return res.status(404).json({ success: false, message: "Not found" });
+    res.json({
+      success: true,
+      application: {
+        appliedToHR:   user.appliedToHR || false,
+        appliedAt:     user.appliedAt   || null,
+        status:        user.status      || "New",
+        interviewDate: user.interviewDate || null,
+        notes:         user.notes      || "",
+        targetRole:    user.targetRole  || "",
+        atsScore:      user.lastAtsScore || 0,
+      }
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

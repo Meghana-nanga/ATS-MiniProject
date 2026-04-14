@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { adminAPI } from "../utils/api";
+import { adminAPI, superAdminAPI } from "../utils/api";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 
 function initials(n=""){ return n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2); }
@@ -40,15 +40,23 @@ export default function SuperAdminDashboard() {
     setLoading(true);
     try {
       const [candRes, analyticsRes] = await Promise.all([
-        adminAPI.getCandidates({ limit: 200 }),
-        adminAPI.getAnalytics(),
+        superAdminAPI.getUsers({ limit: 200 }),
+        superAdminAPI.getAnalytics(),
       ]);
       const all = candRes.data.users || [];
       setCandidates(all);
       setFlagged(all.filter(u => u.isFraudFlagged || u.status === "Flagged"));
-      if (analyticsRes.data.analytics) setAnalytics(analyticsRes.data.analytics);
-      if (analyticsRes.data.fraudCandidates) {
-        setFlagged(analyticsRes.data.fraudCandidates);
+      if (analyticsRes.data.analytics) {
+        const a = analyticsRes.data.analytics;
+        // Normalize analytics shape for the dashboard
+        setAnalytics({
+          total:       a.users?.total    || 0,
+          active:      a.users?.active   || 0,
+          flagged:     a.users?.fraud    || 0,
+          avgScore:    a.avgScore        || 0,
+          monthly:     a.monthly         || [],
+          scoreRanges: a.scoreRanges     || [],
+        });
       }
     } catch(err) {
       showToast("Failed to load data","error");
@@ -66,7 +74,7 @@ export default function SuperAdminDashboard() {
   // Super admin can ban, restore, or clear fraud flag
   const handleBan = async (id, reason) => {
     try {
-      await adminAPI.flagRemove(id, { reason: reason || "Banned by Super Admin" });
+      await superAdminAPI.banUser(id, { reason: reason || "Banned by Super Admin" });
       showToast("🚫 User banned and removed");
       loadAll();
     } catch { showToast("Action failed","error"); }
@@ -74,7 +82,7 @@ export default function SuperAdminDashboard() {
 
   const handleRestore = async (id) => {
     try {
-      await adminAPI.restore(id);
+      await superAdminAPI.restoreUser(id);
       showToast("✅ User restored");
       loadAll();
     } catch { showToast("Action failed","error"); }
@@ -82,9 +90,7 @@ export default function SuperAdminDashboard() {
 
   const handleClearFraud = async (id) => {
     try {
-      await adminAPI.updateStatus(id, { status: "Active" });
-      // Also clear fraud flag
-      await adminAPI.restore(id);
+      await superAdminAPI.restoreUser(id);
       showToast("✅ Fraud flag cleared — user marked Active");
       loadAll();
     } catch { showToast("Action failed","error"); }

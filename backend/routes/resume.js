@@ -1,7 +1,8 @@
-const express = require("express");
-const router  = express.Router();
+const express     = require("express");
+const router      = express.Router();
 const { protect } = require("../middleware/auth");
-const upload  = require("../middleware/upload"); // already using multer
+const upload      = require("../middleware/upload");       // PDF/DOC only
+const videoUpload = require("../middleware/videoUpload");  // Video files
 const {
   uploadResume,
   analyzeResume,
@@ -15,17 +16,25 @@ const {
 router.use(protect);
 
 // Resume upload (PDF/DOC)
-router.post("/upload", upload.single("resume"), uploadResume);
+router.post("/upload",        upload.single("resume"),            uploadResume);
 
-// 🔥 FIXED: Accept VIDEO here
-router.post("/analyze", upload.single("video"), analyzeResume);
+// Resume analyze (no file needed — uses resumeId)
+router.post("/analyze",       analyzeResume);
 
-// Routes
-router.get("/my", getMyResumes);
-router.get("/", getMyResumes);
-router.post("/cover-letter", generateCoverLetter);
-router.get("/:id/text", getResumeText);
-router.post("/video-analyze", upload.single("video"), analyzeVideoResume);
-router.delete("/:id", deleteResume);
+// Cover letter
+router.post("/cover-letter",  generateCoverLetter);
+
+// Resumes list
+router.get("/my",             getMyResumes);
+router.get("/",               getMyResumes);
+
+// Resume text
+router.get("/:id/text",       getResumeText);
+
+// Video resume analyze — uses videoUpload middleware (100MB, mp4/mov/webm/avi)
+router.post("/video-analyze", videoUpload.single("video"), analyzeVideoResume);
+
+// Delete resume
+router.delete("/:id",         deleteResume);
 
 module.exports = router;

@@ -251,12 +251,48 @@ exports.getAnalytics = async (req, res) => {
   try {
     const User = require("../models/User");
 
-    const totalUsers = await User.countDocuments();
+    const [total, active, flagged, avgScoreRes, monthly, scoreRanges] = await Promise.all([
+      User.countDocuments({ role: "user" }),
+      User.countDocuments({ role: "user", isActive: true }),
+      User.countDocuments({ role: "user", isFraudFlagged: true }),
+      User.aggregate([
+        { $match: { role: "user", lastAtsScore: { $gt: 0 } } },
+        { $group: { _id: null, avg: { $avg: "$lastAtsScore" } } }
+      ]),
+      User.aggregate([
+        { $match: { role: "user" } },
+        { $group: { _id: { month: { $month: "$createdAt" }, year: { $year: "$createdAt" } }, count: { $sum: 1 } } },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+        { $limit: 12 }
+      ]),
+      User.aggregate([
+        { $match: { role: "user", lastAtsScore: { $gt: 0 } } },
+        { $bucket: {
+            groupBy: "$lastAtsScore",
+            boundaries: [0, 40, 60, 80, 101],
+            default: "other",
+            output: { count: { $sum: 1 } }
+        }}
+      ])
+    ]);
+
+    // Map bucket boundaries to the _id values the frontend expects (0,40,60,80)
+    const rangeMapped = [
+      { _id: 0,  count: scoreRanges.find(r => r._id === 0)?.count  || 0 },
+      { _id: 40, count: scoreRanges.find(r => r._id === 40)?.count || 0 },
+      { _id: 60, count: scoreRanges.find(r => r._id === 60)?.count || 0 },
+      { _id: 80, count: scoreRanges.find(r => r._id === 80)?.count || 0 },
+    ];
 
     res.json({
       success: true,
       analytics: {
-        totalUsers
+        total,
+        active,
+        flagged,
+        avgScore: Math.round(avgScoreRes[0]?.avg || 0),
+        monthly,
+        scoreRanges: rangeMapped,
       }
     });
 

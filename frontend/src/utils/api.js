@@ -103,4 +103,31 @@ export const adminAPI = {
     }),
 };
 
+// ── SUPER ADMIN ───────────────────────────────────────────────────────────────
+export const superAdminAPI = {
+  getUsers:        (params)   => api.get("/superadmin/users",           { params }),
+  getUser:         (id)       => api.get(`/superadmin/users/${id}`),
+  banUser:         (id, data) => api.put(`/superadmin/users/${id}/ban`,      data),
+  flagAndBan:      (id, data) => api.put(`/superadmin/users/${id}/flag-ban`, data),
+  restoreUser:     (id)       => api.put(`/superadmin/users/${id}/restore`),
+  getAdmins:       ()         => api.get("/superadmin/admins"),
+  createAdmin:     (data)     => api.post("/superadmin/admins",          data),
+  removeAdmin:     (id)       => api.delete(`/superadmin/admins/${id}`),
+  getApplications: (params)   => api.get("/superadmin/applications",    { params }),
+  getAnalytics:    ()         => api.get("/superadmin/analytics"),
+  getFraudReport:  ()         => api.get("/superadmin/fraud-report"),
+  getAlerts:       ()         => api.get("/superadmin/alerts"),
+  markAlertRead:   (id)       => api.put(`/superadmin/alerts/${id}/read`),
+};
+
+// ── INTERVIEW ─────────────────────────────────────────────────────────────────
+export const interviewAPI = {
+  schedule:            (data)       => api.post("/interview",               data),
+  getAll:              (params)     => api.get("/interview",                 { params }),
+  getForCandidate:     (id)         => api.get(`/interview/candidate/${id}`),
+  update:              (id, data)   => api.put(`/interview/${id}`,           data),
+  recordOutcome:       (id, data)   => api.post(`/interview/${id}/outcome`,  data),
+  getMy:               ()           => api.get("/interview/my"),
+};
+
 export default api;

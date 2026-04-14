@@ -46,7 +46,8 @@ app.use("/api/resume", require("./routes/resume"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/superadmin", require("./routes/superAdmin"));
-app.use("/api/jobs", require("./routes/jobs"));
+app.use("/api/jobs",      require("./routes/jobs"));
+app.use("/api/interview", require("./routes/interview"));
 
 // Health check
 
