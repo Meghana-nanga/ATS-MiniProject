@@ -5,7 +5,9 @@ const upload  = require("../middleware/upload"); // already using multer
 const {
   uploadResume,
   analyzeResume,
+  analyzeVideoResume,
   getMyResumes,
+  getResumeText,
   generateCoverLetter,
   deleteResume,
 } = require("../controllers/resumeController");
@@ -22,6 +24,8 @@ router.post("/analyze", upload.single("video"), analyzeResume);
 router.get("/my", getMyResumes);
 router.get("/", getMyResumes);
 router.post("/cover-letter", generateCoverLetter);
+router.get("/:id/text", getResumeText);
+router.post("/video-analyze", upload.single("video"), analyzeVideoResume);
 router.delete("/:id", deleteResume);
 
 module.exports = router;

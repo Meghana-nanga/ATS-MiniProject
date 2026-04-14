@@ -5,7 +5,7 @@ const BASE = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
 const api = axios.create({ baseURL: BASE });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("hireiq_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -14,8 +14,8 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
+      localStorage.removeItem("hireiq_token");
+      localStorage.removeItem("hireiq_user");
       window.location.href = "/login";
     }
     return Promise.reject(err);
@@ -49,7 +49,14 @@ export const resumeAPI = {
   analyze:      (data) => api.post("/resume/analyze", data),
   getMyResumes: ()     => api.get("/resume/my"),
   getOne:       (id)   => api.get(`/resume/${id}`),
+  getText:      (id)   => api.get(`/resume/${id}/text`),
   delete:       (id)   => api.delete(`/resume/${id}`),
+  remove:       (id)   => api.delete(`/resume/${id}`),
+  getAll:       ()     => api.get("/resume/my"),
+  coverLetter:  (data) => api.post("/resume/cover-letter", data),
+  analyzeVideo: (formData) => api.post("/resume/video-analyze", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }),
   score:        (id, data) => api.post(`/resume/${id}/score`, data),
 };
 

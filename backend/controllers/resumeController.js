@@ -51,145 +51,138 @@ exports.uploadResume = async (req, res) => {
 
 exports.analyzeResume = async (req, res) => {
   try {
-    const { resumeId, jobDescription, jobTitle } = req.body;
+    const { resumeId, jobDescription, jobTitle, geminiResult } = req.body;
 
-    if (!resumeId) {
-      return res.status(400).json({
-        success: false,
-        message: "resumeId required"
+    if (!resumeId) return res.status(400).json({ success: false, message: "resumeId required" });
+
+    const resume = await Resume.findOne({ _id: resumeId, user: req.user._id });
+    if (!resume) return res.status(404).json({ success: false, message: "Resume not found" });
+
+    // Run atsEngine analysis (strict scoring, no external AI needed)
+    if (!geminiResult) {
+      const { analyzeResume: runAts } = require("../ml/atsEngine");
+      const result = await runAts(resume.extractedText, jobDescription, jobTitle);
+      
+      // Save to DB
+      await Resume.findByIdAndUpdate(resumeId, {
+        atsScore:        result.atsScore,
+        keywordScore:    result.breakdown?.keywordScore    || 0,
+        formattingScore: result.breakdown?.formattingScore || 0,
+        experienceScore: result.breakdown?.experienceScore || 0,
+        educationScore:  result.breakdown?.educationScore  || 0,
+        skillsScore:     result.breakdown?.skillsScore     || 0,
+        matchedKeywords: result.matchedKeywords || [],
+        missingKeywords: result.missingKeywords || [],
+        foundSkills:     result.foundSkills     || [],
+        missingSkills:   result.missingSkills   || [],
+        fraudScore:      result.fraud?.fraudScore       || 0,
+        isFraudSuspected:result.fraud?.isFraudSuspected || false,
+        fraudAnalysis:   result.fraud?.analysis         || "",
+        jobDescription, jobTitle,
+        analysisStatus: "complete",
+        analyzedAt: new Date(),
       });
-    }
 
-    const resume = await Resume.findOne({
-      _id: resumeId,
-      user: req.user._id
-    });
-
-    if (!resume) {
-      return res.status(404).json({
-        success: false,
-        message: "Resume not found"
+      await User.findByIdAndUpdate(req.user._id, {
+        lastAtsScore: result.atsScore,
+        $inc: { totalAnalyses: 1 },
+        ...(result.fraud?.isFraudSuspected ? { isFraudFlagged: true, status: "Flagged" } : {}),
       });
+
+      await Analysis.create({
+        user: req.user._id, resume: resume._id,
+        type: "ats", result: { ats: result },
+        score: result.atsScore, jobTitle, jobDescription,
+      });
+
+      return res.json({ success: true, result, resume });
     }
 
-    resume.analysisStatus = "analyzing";
-    await resume.save();
+    const atsScore = geminiResult.atsScore || 0;
 
-    const t0 = Date.now();
-
-    // ✅ ATS ANALYSIS
-    const result = await analyzeResume(
-      resume.extractedText,
-      jobDescription,
-      jobTitle
-    );
-
-    // ✅ VIDEO ANALYSIS (FIXED)
-    const { analyzeVideo } = require("../services/videoAnalysisService");
-
-    let videoResult = { score: 0, transcript: "" };
-
-    if (req.file) {
-      videoResult = await analyzeVideo(
-        req.file.path,
-        resume.extractedText
-      );
-
-      // delete uploaded video
-      if (fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
-    }
-
-    // ✅ FINAL SCORE
-    const finalScore = Math.round(
-      result.atsScore * 0.7 + videoResult.score * 0.3
-    );
-
-    // ✅ SAVE INTO RESUME
-    Object.assign(resume, {
-      atsScore: result.atsScore,
-      keywordScore: result.breakdown.keywordScore,
-      formattingScore: result.breakdown.formattingScore,
-      experienceScore: result.breakdown.experienceScore,
-      educationScore: result.breakdown.educationScore,
-      skillsScore: result.breakdown.skillsScore,
-
-      matchedKeywords: result.matchedKeywords,
-      missingKeywords: result.missingKeywords,
-      foundSkills: result.foundSkills,
-      missingSkills: result.missingSkills,
-
-      fraudScore: result.fraud.fraudScore,
-      isFraudSuspected: result.fraud.isFraudSuspected,
-      fraudFlags: result.fraud.flags,
-      fraudAnalysis: result.fraud.analysis,
-
-      // ✅ NEW
-      videoScore: videoResult.score,
-      finalScore: finalScore,
-
+    await Resume.findByIdAndUpdate(resumeId, {
+      atsScore,
+      keywordScore:     geminiResult.breakdown?.keywordScore    || 0,
+      formattingScore:  geminiResult.breakdown?.formattingScore || 0,
+      experienceScore:  geminiResult.breakdown?.experienceScore || 0,
+      educationScore:   geminiResult.breakdown?.educationScore  || 0,
+      skillsScore:      geminiResult.breakdown?.skillsScore     || 0,
+      matchedKeywords:  geminiResult.matchedKeywords || [],
+      missingKeywords:  geminiResult.missingKeywords || [],
+      foundSkills:      geminiResult.foundSkills     || [],
+      missingSkills:    geminiResult.missingSkills   || [],
+      fraudScore:       geminiResult.fraud?.fraudScore       || 0,
+      isFraudSuspected: geminiResult.fraud?.isFraudSuspected || false,
+      fraudAnalysis:    geminiResult.fraud?.analysis         || "",
       jobDescription,
       jobTitle,
       analysisStatus: "complete",
       analyzedAt: new Date(),
     });
 
-    await resume.save();
-
-    // ✅ USER UPDATE
-    let fraudUpdate = {};
-
-    if (result.fraud.isFraudSuspected || videoResult.score < 30) {
-      fraudUpdate = {
-        status: "Flagged",
-        isFraudFlagged: true,
-        fraudReason: "Resume and video mismatch"
-      };
-    }
-
     await User.findByIdAndUpdate(req.user._id, {
-      lastAtsScore: result.atsScore,
-      videoScore: videoResult.score,
-      finalScore: finalScore,
-      fraudScore: result.fraud.fraudScore,
-      isFraudFlagged:
-        result.fraud.isFraudSuspected || videoResult.score < 30,
+      lastAtsScore: atsScore,
       $inc: { totalAnalyses: 1 },
-      ...fraudUpdate
+      ...(geminiResult.fraud?.isFraudSuspected ? { isFraudFlagged: true, status: "Flagged" } : {}),
     });
 
-    // ✅ STORE ANALYSIS
     await Analysis.create({
-      user: req.user._id,
+      user:   req.user._id,
       resume: resume._id,
-      type: "ats_video_combined",
-      result: {
-        ats: result,
-        video: videoResult,
-        finalScore
-      },
-      score: finalScore,
+      type:   "ats",
+      result: { ats: geminiResult },
+      score:  atsScore,
       jobTitle,
       jobDescription,
-      duration: Date.now() - t0,
     });
 
-    // ✅ RESPONSE
-    res.json({
-      success: true,
-      result,
-      video: videoResult,
-      finalScore,
-      resume
-    });
-
+    res.json({ success: true, result: geminiResult, resume });
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      success: false,
-      message: err.message
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+
+exports.analyzeVideoResume = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: "No video uploaded" });
+    const { jobDescription, resumeId } = req.body;
+    const { analyzeVideo } = require("../services/videoAnalysisService");
+
+    // Get resume text if resumeId provided
+    let resumeText = "";
+    if (resumeId) {
+      const resume = await Resume.findOne({ _id: resumeId, user: req.user._id }).select("extractedText");
+      if (resume) resumeText = resume.extractedText || "";
+    }
+
+    const result = await analyzeVideo(req.file.path, resumeText, jobDescription || "");
+
+    // Cleanup uploaded video
+    const fs = require("fs");
+    if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+
+    // Update user video score
+    await User.findByIdAndUpdate(req.user._id, {
+      videoScore: result.overallScore || result.score || 0,
     });
+
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getResumeText = async (req, res) => {
+  try {
+    const resume = await Resume.findOne({ _id: req.params.id, user: req.user._id })
+      .select("extractedText originalName");
+    if (!resume) return res.status(404).json({ success: false, message: "Resume not found" });
+    res.json({ success: true, extractedText: resume.extractedText, originalName: resume.originalName });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
