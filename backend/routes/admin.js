@@ -1,14 +1,13 @@
 const express = require("express");
 const router  = express.Router();
-const { protect, admin, superadmin } = require("../middleware/auth");
+const { protect, adminOnly } = require("../middleware/auth");
 const {
   getAllCandidates, getCandidate, updateCandidateStatus,
   removeCandidate, flagForSuperAdmin, flagAndRemove, restoreCandidate,
-  addCandidate, getRankings, getAnalytics, resendShortlistEmail, exportCSV,
+  addCandidate, getRankings, getAnalytics, resendShortlistEmail, exportCSV
 } = require("../controllers/adminController");
 
-router.use(protect, admin);
-
+router.use(protect, adminOnly);
 router.get ("/candidates",                       getAllCandidates);
 router.post("/candidates",                       addCandidate);
 router.get ("/candidates/export",                exportCSV);
@@ -22,5 +21,11 @@ router.put ("/candidates/:id/restore",           restoreCandidate);
 router.post("/candidates/:id/resend-email",      resendShortlistEmail);
 router.get ("/rankings",                         getRankings);
 router.get ("/analytics",                        getAnalytics);
-
+router.put("/flag/:id", flagForSuperAdmin);
+router.put("/status/:id", updateCandidateStatus);
+router.post("/resend-email/:id", protect, adminOnly, resendShortlistEmail);
+router.get(
+  "/export-csv",
+  exportCSV
+);
 module.exports = router;

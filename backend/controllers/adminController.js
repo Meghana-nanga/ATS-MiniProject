@@ -1,6 +1,21 @@
+const Alert = require("../models/Alert");
 const User   = require("../models/User");
 const Resume = require("../models/Resume");
 const { sendShortlistEmail } = require("../services/emailService");
+
+function csvEscape(val) {
+
+  if (val === null || val === undefined)
+    return "";
+
+  const str =
+    String(val).replace(/"/g, '""');
+
+  return /[",\n\r]/.test(str)
+    ? `"${str}"`
+    : str;
+
+}
 
 // ─── GET ALL CANDIDATES ────────────────────────────────────────────────────────
 // KEY FIX: HR admins only see users who have appliedToHR=true
@@ -38,7 +53,7 @@ exports.getAllCandidates = async (req, res) => {
 
     const total = await User.countDocuments(filter);
     const users = await User.find(filter)
-      .sort(sort)
+      .sort("-finalScore")
       .skip((page - 1) * Number(limit))
       .limit(Number(limit))
       .lean();
@@ -124,6 +139,23 @@ exports.flagForSuperAdmin = async (req, res) => {
       },
       { new: true }
     );
+    await Alert.create({
+
+      type: "fraud_flag",
+    
+      title: `Fraud Flag: ${user.name}`,
+    
+      message:
+        reason ||
+        "HR admin flagged this user for review.",
+    
+      severity: "high",
+    
+      targetUser: user._id,
+    
+      createdBy: req.user._id
+    
+    });
 
     if (!user) return res.status(404).json({ success: false, message: "Candidate not found" });
 
@@ -217,55 +249,23 @@ exports.addCandidate = async (req, res) => {
 // ─── ANALYTICS ───────────────────────────────────────────────────────────────
 exports.getAnalytics = async (req, res) => {
   try {
-    // HR sees stats only for applied candidates; Super Admin sees all
-    const baseFilter = req.user?.role === "admin"
-      ? { role: "user", appliedToHR: true }
-      : { role: "user" };
+    const User = require("../models/User");
 
-    const [total, active, flagged, shortlisted, avgArr, scoreRanges, monthly, fraudCandidates] =
-      await Promise.all([
-        User.countDocuments(baseFilter),
-        User.countDocuments({ ...baseFilter, isActive: true }),
-        User.countDocuments({ ...baseFilter, isFraudFlagged: true }),
-        User.countDocuments({ ...baseFilter, status: "Shortlisted" }),
-        User.aggregate([
-          { $match: { ...baseFilter, lastAtsScore: { $gt: 0 } } },
-          { $group: { _id: null, avg: { $avg: "$lastAtsScore" } } }
-        ]),
-        User.aggregate([
-          { $match: baseFilter },
-          { $bucket: {
-              groupBy: "$lastAtsScore",
-              boundaries: [0, 40, 60, 80, 101],
-              default: "Other",
-              output: { count: { $sum: 1 } }
-          }}
-        ]),
-        User.aggregate([
-          { $match: baseFilter },
-          { $group: {
-              _id: { month: { $month: "$createdAt" }, year: { $year: "$createdAt" } },
-              count: { $sum: 1 }
-          }},
-          { $sort: { "_id.year": 1, "_id.month": 1 } }
-        ]),
-        // Fraud candidates — Super Admin uses this for Alerts tab
-        User.find({ role: "user", isFraudFlagged: true })
-          .select("name email fraudScore fraudReason lastAtsScore status createdAt isFraudFlagged fraudFlaggedAt fraudFlaggedBy")
-          .lean()
-      ]);
+    const totalUsers = await User.countDocuments();
 
     res.json({
       success: true,
       analytics: {
-        total, active, flagged, shortlisted,
-        avgScore:    avgArr[0] ? Math.round(avgArr[0].avg) : 0,
-        scoreRanges, monthly,
-      },
-      fraudCandidates,
+        totalUsers
+      }
     });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load analytics"
+    });
   }
 };
 
@@ -312,40 +312,178 @@ exports.resendShortlistEmail = async (req, res) => {
 
 // ─── CSV EXPORT ───────────────────────────────────────────────────────────────
 exports.exportCSV = async (req, res) => {
+
   try {
-    const filter = req.user?.role === "admin"
-      ? { role: "user", appliedToHR: true }
-      : { role: "user" };
 
-    const users = await User.find(filter).lean();
+    const User =
+      require("../models/User");
 
-    // Proper CSV with quotes to handle commas in fields
-    const escape = (v) => {
-      if (v === null || v === undefined) return "";
-      const s = String(v).replace(/"/g, '""');
-      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s}"` : s;
+    const filter = {
+      role: "user"
     };
 
-    const headers = ["Name","Email","Role","ATS Score","Status","Fraud Flagged","Fraud Score","Location","Phone","Joined"];
+    if (req.user?.role === "admin") {
+      filter.appliedToHR = true;
+    }
+
+    const users = await User.find(filter)
+      .sort("-lastAtsScore")
+      .lean();
+
+    const headers = [
+
+      "Name",
+      "Email",
+      "Status",
+      "ATS Score",
+      "Target Role",
+      "Phone",
+      "Location",
+      "Total Analyses",
+      "Applied To HR",
+      "Fraud Flagged",
+      "Fraud Score",
+      "Fraud Reason",
+      "Interview Date",
+      "Notes",
+      "Joined"
+
+    ];
+
     const rows = users.map(u => [
-      escape(u.name),
-      escape(u.email),
-      escape(u.targetRole),
-      escape(u.lastAtsScore),
-      escape(u.status),
-      escape(u.isFraudFlagged ? "Yes" : "No"),
-      escape(u.fraudScore),
-      escape(u.location),
-      escape(u.phone),
-      escape(u.createdAt ? new Date(u.createdAt).toLocaleDateString("en-IN") : ""),
+
+      csvEscape(u.name),
+
+      csvEscape(u.email),
+
+      csvEscape(u.status),
+
+      csvEscape(u.lastAtsScore),
+
+      csvEscape(u.targetRole),
+
+      csvEscape(u.phone),
+
+      csvEscape(u.location),
+
+      csvEscape(u.totalAnalyses),
+
+      csvEscape(
+        u.appliedToHR ? "Yes" : "No"
+      ),
+
+      csvEscape(
+        u.isFraudFlagged ? "Yes" : "No"
+      ),
+
+      csvEscape(u.fraudScore),
+
+      csvEscape(u.fraudReason),
+
+      csvEscape(
+        u.interviewDate
+          ? new Date(
+              u.interviewDate
+            ).toLocaleDateString("en-IN")
+          : ""
+      ),
+
+      csvEscape(u.notes),
+
+      csvEscape(
+        new Date(
+          u.createdAt
+        ).toLocaleDateString("en-IN")
+      )
+
     ].join(","));
 
-    const csv = [headers.join(","), ...rows].join("\n");
+    const csv =
+      [headers.join(","), ...rows]
+      .join("\r\n");
 
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="candidates_${Date.now()}.csv"`);
-    res.send("\uFEFF" + csv); // BOM for Excel UTF-8
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    const filename =
+      `candidates_${new Date()
+        .toISOString()
+        .slice(0,10)}.csv`;
+
+    res.setHeader(
+      "Content-Type",
+      "text/csv; charset=utf-8"
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`
+    );
+
+    res.send("\uFEFF" + csv);
+
   }
+
+  catch (err) {
+
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+
+};
+// GET all alerts
+exports.getAlerts = async (req, res) => {
+  try {
+
+    const alerts = await Alert.find()
+      .populate("targetUser", "name email status lastAtsScore")
+      .populate("createdBy", "name email")
+      .sort("-createdAt")
+      .limit(100);
+
+    const unreadCount = await Alert.countDocuments({
+      isRead: false
+    });
+
+    res.json({
+      success: true,
+      alerts,
+      unreadCount
+    });
+
+  } catch (err) {
+
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+};
+
+
+// MARK alert as read
+exports.markAlertRead = async (req, res) => {
+
+  try {
+
+    await Alert.findByIdAndUpdate(
+      req.params.id,
+      {
+        isRead: true,
+        readAt: new Date()
+      }
+    );
+
+    res.json({ success: true });
+
+  } catch (err) {
+
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+
 };

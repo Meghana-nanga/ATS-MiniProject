@@ -1,7 +1,9 @@
 const express = require("express");
-const router  = express.Router();
-const { protect, admin } = require("../middleware/auth");
-const { getAnalytics }   = require("../controllers/adminController");
+const router = express.Router();
 
-router.get("/", protect, admin, getAnalytics);
+const { getAnalytics } = require("../controllers/adminController");
+
+// GET analytics data
+router.get("/", getAnalytics);
+
 module.exports = router;

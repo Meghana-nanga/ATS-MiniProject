@@ -1,5 +1,9 @@
 const express = require("express");
 const router  = express.Router();
+const {
+  getAlerts,
+  markAlertRead
+} = require("../controllers/superAdminController");
 const { protect, superadmin } = require("../middleware/auth");
 const {
   getAllUsers, getPlatformAnalytics,
@@ -23,5 +27,14 @@ router.delete("/admins/:id",         removeAdmin);
 router.get("/applications",          getAllApplications);
 router.get("/analytics",             getPlatformAnalytics);
 router.get("/fraud-report",          getFraudReport);
+router.get(
+  "/alerts",
+  getAlerts
+);
+
+router.put(
+  "/alerts/:id/read",
+  markAlertRead
+);
 
 module.exports = router;

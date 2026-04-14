@@ -113,162 +113,33 @@ const SKILL_SYNONYMS = {
   }
   
   // ── MAIN ATS ANALYSIS ─────────────────────────────────────────────────────────
-  function analyzeResume(resumeText, jobDescription) {
-    if (!resumeText || resumeText.trim().length < 50) {
-      return { error: "Resume text is too short or empty" };
-    }
+  function analyzeResume(text, targetRole) {
+    const lower = text.toLowerCase();
   
-    const resumeWords   = extractWords(resumeText);
-    const jdWords       = extractWords(jobDescription || "");
-    const resumeSkills  = extractSkillsFromText(resumeText);
-    const jdSkills      = extractSkillsFromText(jobDescription || "");
-    const sections      = detectSections(resumeText);
-    const achievements  = countQuantifiedAchievements(resumeText);
-  
-    // ── 1. KEYWORD MATCH (30 pts) ─────────────────────────────────────────────
-    let keywordScore = 0;
-    const matchedKeywords   = [];
-    const missingKeywords   = [];
-  
-    if (jdWords.length === 0) {
-      // No JD: score based on resume content richness
-      keywordScore = Math.min(30, Math.floor(resumeWords.length / 10));
-    } else {
-      // Unique important JD words (not stop words, not too common)
-      const uniqueJdWords = [...new Set(jdWords)];
-      const resumeWordSet = new Set(extractWords(resumeText));
-  
-      for (const word of uniqueJdWords) {
-        if (resumeWordSet.has(word)) {
-          matchedKeywords.push(word);
-        } else {
-          missingKeywords.push(word);
-        }
-      }
-      const matchRatio = uniqueJdWords.length > 0
-        ? matchedKeywords.length / uniqueJdWords.length
-        : 0;
-      keywordScore = Math.round(matchRatio * 30);
-    }
-  
-    // ── 2. SKILL MATCH (35 pts) ───────────────────────────────────────────────
-    let skillScore = 0;
-    const matchedSkills = [];
-    const missingSkills = [];
-    const skillGaps     = [];
-  
-    if (jdSkills.length === 0) {
-      // No JD: score based on resume skills count
-      skillScore = Math.min(35, resumeSkills.length * 4);
-      matchedSkills.push(...resumeSkills);
-    } else {
-      for (const skill of jdSkills) {
-        if (resumeSkills.includes(skill)) {
-          matchedSkills.push(skill);
-        } else {
-          missingSkills.push(skill);
-          skillGaps.push({
-            skill,
-            importance: "Required",
-            suggestion: `Add ${skill} or related experience to your resume`,
-          });
-        }
-      }
-      // Bonus for extra skills on resume beyond JD
-      const extraSkills = resumeSkills.filter(s => !jdSkills.includes(s));
-      const matchRatio  = jdSkills.length > 0 ? matchedSkills.length / jdSkills.length : 0;
-      skillScore = Math.round(matchRatio * 30) + Math.min(5, extraSkills.length);
-      skillScore = Math.min(35, skillScore);
-    }
-  
-    // ── 3. SECTION COMPLETENESS (20 pts) ─────────────────────────────────────
-    const sectionPoints = {
-      hasContact:      3,
-      hasObjective:    2,
-      hasExperience:   5,
-      hasEducation:    4,
-      hasSkills:       4,
-      hasProjects:     2,
-      hasCertifications: 2,
+    const roleKeywords = {
+      developer: ["javascript", "node", "react", "mongodb"],
+      data: ["python", "ml", "pandas", "numpy"]
     };
-    let sectionScore = 0;
-    const missingSections = [];
-    for (const [key, pts] of Object.entries(sectionPoints)) {
-      if (sections[key]) sectionScore += pts;
-      else missingSections.push(key.replace("has", "").replace(/([A-Z])/g, " $1").trim());
-    }
-    sectionScore = Math.min(20, sectionScore);
   
-    // ── 4. QUANTIFICATION & EXPERIENCE (15 pts) ──────────────────────────────
-    let experienceScore = 0;
-    experienceScore += Math.min(8, achievements * 2);     // up to 8 pts for achievements
-    experienceScore += resumeText.length > 1000 ? 4 : 2; // detail bonus
-    experienceScore += resumeSkills.length > 5  ? 3 : 1; // skill breadth
-    experienceScore = Math.min(15, experienceScore);
+    const keywords = roleKeywords[targetRole?.toLowerCase()] || [];
   
-    // ── TOTAL SCORE ───────────────────────────────────────────────────────────
-    const rawScore = keywordScore + skillScore + sectionScore + experienceScore;
-    // Calibration: prevent score inflation — max of 95 not 100 unless excellent
-    const totalScore = Math.min(95, rawScore);
+    let matched = [];
+    let missing = [];
   
-    // ── RECOMMENDATIONS ───────────────────────────────────────────────────────
-    const recommendations = [];
-    if (missingSkills.length > 0)
-      recommendations.push(`Add these key skills: ${missingSkills.slice(0,5).join(", ")}`);
-    if (!sections.hasObjective)
-      recommendations.push("Add a professional summary/objective at the top");
-    if (!sections.hasProjects)
-      recommendations.push("Add a Projects section to showcase your work");
-    if (!sections.hasCertifications)
-      recommendations.push("Add certifications to strengthen credibility");
-    if (achievements < 3)
-      recommendations.push("Quantify more achievements with numbers and percentages");
-    if (missingKeywords.length > 0)
-      recommendations.push(`Include these keywords from the job description: ${missingKeywords.slice(0,5).join(", ")}`);
-    if (!sections.hasContact)
-      recommendations.push("Add contact information (email, phone, LinkedIn)");
+    keywords.forEach(k => {
+      if (lower.includes(k)) matched.push(k);
+      else missing.push(k);
+    });
   
-    // ── STRENGTHS ─────────────────────────────────────────────────────────────
-    const strengths = [];
-    if (matchedSkills.length > 0)
-      strengths.push(`Strong skill match: ${matchedSkills.slice(0,4).join(", ")}`);
-    if (sections.hasExperience)
-      strengths.push("Work experience section is present");
-    if (sections.hasEducation)
-      strengths.push("Education section is present");
-    if (achievements >= 3)
-      strengths.push(`${achievements} quantified achievements found`);
-    if (resumeSkills.length > 6)
-      strengths.push(`Diverse skill set: ${resumeSkills.length} skills detected`);
-  
-    // ── SCORE GRADE ───────────────────────────────────────────────────────────
-    const grade = totalScore >= 80 ? "Excellent"
-      : totalScore >= 65 ? "Good"
-      : totalScore >= 50 ? "Average"
-      : "Needs Improvement";
+    const score = Math.round((matched.length / keywords.length) * 100);
   
     return {
-      score:          totalScore,
-      grade,
-      breakdown: {
-        keywordMatch:   keywordScore,   // /30
-        skillMatch:     skillScore,     // /35
-        sectionScore:   sectionScore,   // /20
-        experienceScore,                // /15
-      },
-      matchedKeywords: [...new Set(matchedKeywords)].slice(0, 20),
-      missingKeywords: [...new Set(missingKeywords)].slice(0, 15),
-      matchedSkills,
-      missingSkills,
-      skillGaps,
-      sections,
-      recommendations: recommendations.slice(0, 6),
-      strengths:       strengths.slice(0, 4),
-      missingSections,
-      resumeWordCount: resumeWords.length,
-      detectedSkillsCount: resumeSkills.length,
-      quantifiedAchievements: achievements,
+      score,
+      matchedSkills: matched,
+      missingSkills: missing
     };
   }
+  
+  module.exports = { analyzeResume };
   
   module.exports = { analyzeResume, extractSkillsFromText };

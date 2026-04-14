@@ -1,3 +1,4 @@
+const Alert = require("../models/Alert");
 const User        = require("../models/User");
 const Resume      = require("../models/Resume");
 const Analysis    = require("../models/Analysis");
@@ -205,4 +206,86 @@ exports.getFraudReport = async (req, res) => {
     }));
     res.json({ success:true, flagged:withResumes, total:withResumes.length });
   } catch (err) { res.status(500).json({ success:false, message:err.message }); }
+};
+
+// GET alerts
+
+exports.getAlerts = async (req, res) => {
+
+  try {
+
+    const alerts = await Alert.find()
+
+      .populate(
+        "targetUser",
+        "name email status lastAtsScore"
+      )
+
+      .populate(
+        "createdBy",
+        "name email"
+      )
+
+      .sort("-createdAt")
+
+      .limit(100);
+
+    const unreadCount =
+      await Alert.countDocuments({
+        isRead: false
+      });
+
+    res.json({
+      success: true,
+      alerts,
+      unreadCount
+    });
+
+  }
+
+  catch (err) {
+
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+
+};
+
+
+
+// Mark alert as read
+
+exports.markAlertRead = async (req, res) => {
+
+  try {
+
+    await Alert.findByIdAndUpdate(
+
+      req.params.id,
+
+      {
+        isRead: true,
+        readAt: new Date()
+      }
+
+    );
+
+    res.json({
+      success: true
+    });
+
+  }
+
+  catch (err) {
+
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+
 };

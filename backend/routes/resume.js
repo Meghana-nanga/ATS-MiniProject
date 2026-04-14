@@ -1,7 +1,7 @@
 const express = require("express");
 const router  = express.Router();
 const { protect } = require("../middleware/auth");
-const upload  = require("../middleware/upload");
+const upload  = require("../middleware/upload"); // already using multer
 const {
   uploadResume,
   analyzeResume,
@@ -11,10 +11,17 @@ const {
 } = require("../controllers/resumeController");
 
 router.use(protect);
-router.post("/upload",       upload.single("resume"), uploadResume);
-router.post("/analyze",      analyzeResume);
-router.get("/",              getMyResumes);
+
+// Resume upload (PDF/DOC)
+router.post("/upload", upload.single("resume"), uploadResume);
+
+// 🔥 FIXED: Accept VIDEO here
+router.post("/analyze", upload.single("video"), analyzeResume);
+
+// Routes
+router.get("/my", getMyResumes);
+router.get("/", getMyResumes);
 router.post("/cover-letter", generateCoverLetter);
-router.delete("/:id",        deleteResume);
+router.delete("/:id", deleteResume);
 
 module.exports = router;
