@@ -3,59 +3,75 @@ const router = express.Router();
 const { superAdminAuth } = require("../middleware/auth");
 const User = require("../models/User");
 const Alert = require("../models/Alert");
+const express = require("express");
+const superAdminAuth = require("../middleware/superAdminAuth");
 
+
+router.get("/alerts", superAdminAuth, async (req, res) => {
+  try {
+    const alerts = await Alert.find({ type: "fraud_flag" })
+      .populate("targetUser", "name email status fraudReason")
+      .populate("createdBy", "name email")
+      .sort({ createdAt: -1 });
+
+    res.json({ success: true, alerts });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 // POST /api/super-admin/decide/:userId
 router.post("/decide/:userId", superAdminAuth, async (req, res) => {
   try {
-    const { userId } = req.params;
-    const { action, reason, alertId } = req.body;
+    const { action, reason } = req.body;
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    // 1. Apply decision
-    if (action === "ban") {
-      user.isActive = false;
-      user.status = "Banned";
-      user.isFraudFlagged = true;
-    } else {
-      user.isActive = true;
-      user.isFraudFlagged = false;
-      if (user.status === "Flagged" || user.status === "Banned") {
-        user.status = "Active";
-      }
+    const user = await User.findById(req.params.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
     }
+
+    if (action === "ban") {
+      user.status = "Banned";
+    } else if (action === "clear") {
+      user.status = "Active";
+      user.isFraudFlagged = false;
+    }
+
+    // ✅ THIS WAS MISSING
+    user.superAdminDecision = action;
+    user.superAdminDecidedAt = new Date();
 
     await user.save();
 
-    // 2. Close original alert
-    if (alertId) {
-      await Alert.findByIdAndUpdate(alertId, {
-        isRead: true,
-        resolvedAt: new Date(),
-      });
-    }
-
-    // 3. Create decision alert for HR
+    // ✅ Create decision alert
     await Alert.create({
       type: "superadmin_decision",
       title:
         action === "ban"
-          ? `🚫 Super Admin Banned: ${user.name}`
-          : `✅ Super Admin Cleared: ${user.name}`,
-      message:
-        reason ||
-        (action === "ban"
-          ? "Super Admin has reviewed and banned this user."
-          : "Super Admin has reviewed and cleared this user."),
+          ? `🚫 BANNED: ${user.name}`
+          : `✅ CLEARED: ${user.name}`,
+      message: reason || "Decision made by Super Admin",
+      severity: action === "ban" ? "high" : "medium",
       targetUser: user._id,
-      isRead: false,
-      createdAt: new Date(),
+      createdBy: req.user._id,
     });
 
-    res.json({ success: true, action, user });
+    res.json({ success: true, user });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.patch("/alerts/:id/read", superAdminAuth, async (req, res) => {
+  try {
+    const alert = await Alert.findByIdAndUpdate(
+      req.params.id,
+      { isRead: true },
+      { new: true }
+    );
+
+    res.json({ success: true, alert });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

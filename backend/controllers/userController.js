@@ -12,6 +12,41 @@ const Resume  = require("../models/Resume");
 const { analyzeResume }       = require("../services/atsService");
 const { analyzeVideo }        = require("../services/videoAnalysisService");
 
+const Application = require("../models/Application");
+const User = require("../models/User");
+
+exports.applyToHR = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // prevent duplicate
+    const existing = await Application.findOne({ user: userId });
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: "Already applied",
+      });
+    }
+
+    const application = await Application.create({
+      user: userId,
+      status: "Applied",
+    });
+
+    res.json({
+      success: true,
+      message: "Applied to HR successfully",
+      application,
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
 // ── GET PROFILE ───────────────────────────────────────────────────────────────
 exports.getProfile = async (req, res) => {
   try {

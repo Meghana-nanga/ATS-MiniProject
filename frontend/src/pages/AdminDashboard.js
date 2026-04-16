@@ -315,16 +315,28 @@ export default function AdminDashboard() {
   }, []);
 
   // ── Initial load + polling for SA decisions ───────────────────────────────
-  useEffect(()=>{
-    loadRankings(); loadAnalytics(); loadSADecisions();
-    // Poll every 30s to pick up Super Admin decisions quickly
-    const interval = setInterval(()=>loadSADecisions(), 30000);
-    return ()=>clearInterval(interval);
-  },[loadSADecisions]);
+  useEffect(() => {
+    const init = async () => {
+      await loadRankings();
+      await loadAnalytics();
+      const decisions = await loadSADecisions();
+      buildAlerts(rankings, fraudCandidates, decisions);
+    };
+  
+    init();
+  
+    const interval = setInterval(async () => {
+      const decisions = await loadSADecisions();
+      buildAlerts(rankings, fraudCandidates, decisions);
+    }, 30000);
+  
+    return () => clearInterval(interval);
+  }, [loadSADecisions]);
 
   useEffect(()=>{ if(tab==="candidates") loadCandidates(); },[tab,loadCandidates]);
-  useEffect(()=>{ buildAlerts(rankings, fraudCandidates, saDecisions); },[rankings,fraudCandidates,saDecisions,buildAlerts]);
-
+  useEffect(() => {
+    buildAlerts(rankings, fraudCandidates, saDecisions);
+  }, [rankings, fraudCandidates, saDecisions]);
   // ── Actions ───────────────────────────────────────────────────────────────
   const handleStatusChange = async(id, status, extra={}) => {
     try{
@@ -337,20 +349,42 @@ export default function AdminDashboard() {
     }catch{ showToast("Update failed","error"); }
   };
 
-  const handleFlagSuperAdmin = async(id, reason) => {
-    try{
+  const handleFlagSuperAdmin = async (id, reason) => {
+    try {
       await adminAPI.flagForSuperAdmin(id, { reason });
-      showToast("🔔 Escalated to Super Admin — you'll be notified once they decide");
-      loadCandidates(); loadRankings(); loadAnalytics();
-    }catch{ showToast("Action failed","error"); }
+  
+      showToast("🔔 Escalated to Super Admin");
+  
+      // ✅ IMPORTANT: refresh everything including alerts
+      await loadCandidates();
+      await loadRankings();
+      await loadAnalytics();
+      const decisions = await loadSADecisions();
+  
+      // rebuild alerts immediately
+      buildAlerts(rankings, fraudCandidates, decisions);
+  
+    } catch {
+      showToast("Action failed", "error");
+    }
   };
 
-  const handleFlagBan = async(id, reason) => {
-    try{
+  const handleFlagBan = async (id, reason) => {
+    try {
       await adminAPI.flagRemove(id, { reason });
+  
       showToast("🚫 Candidate removed");
-      loadCandidates(); loadRankings(); loadAnalytics();
-    }catch{ showToast("Action failed","error"); }
+  
+      await loadCandidates();
+      await loadRankings();
+      await loadAnalytics();
+      const decisions = await loadSADecisions();
+  
+      buildAlerts(rankings, fraudCandidates, decisions);
+  
+    } catch {
+      showToast("Action failed", "error");
+    }
   };
 
   const handleRestore = async id=>{

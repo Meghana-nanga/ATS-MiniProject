@@ -6,10 +6,9 @@ const morgan    = require("morgan");
 const rateLimit = require("express-rate-limit");
 const path      = require("path");
 require("dotenv").config();
-
+const superAdminRoutes = require("./routes/superAdmin");
+const adminRoutes = require("./routes/admin");
 const app = express();
-const superAdminRoutes = require("./routes/superAdminRoutes");
-const adminRoutes = require("./routes/adminRoutes");
 
 
 // ── Middleware ─────────────────────────
@@ -50,8 +49,6 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/superadmin", require("./routes/superAdmin"));
 app.use("/api/jobs",      require("./routes/jobs"));
-app.use("/api/super-admin", superAdminRoutes);
-app.use("/api/admin", adminRoutes);
 
 // Health check
 

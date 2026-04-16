@@ -321,7 +321,7 @@ export default function UserDashboard() {
 
   const loadHistory = async () => {
     setLoadingHistory(true);
-    try { const { data } = await resumeAPI.getAll(); setResumes(data.resumes); }
+    try { const { data } = await resumeAPI.getMyResumes(); setResumes(data.resumes); }
     catch { showToast("Failed to load history","error"); }
     finally { setLoadingHistory(false); }
   };
@@ -676,6 +676,28 @@ export default function UserDashboard() {
     };
     audio.onerror = () => { URL.revokeObjectURL(url); resolve({ durationSec:0, rms:0.3, variance:0.2, peakRatio:0.4, silenceRatio:0.5 }); };
   });
+
+  const saveProfile = async () => {
+    setProfileSaving(true);
+    try {
+      const { data } = await resumeAPI.getMyResumes(); setResumes(data.resumes || data || []);
+      if (updateUser) updateUser(data.user || profileForm);
+      showToast("Profile saved successfully!");
+    } catch (err) {
+      showToast("Failed to save: " + (err.response?.data?.message || err.message), "error");
+    } finally { setProfileSaving(false); }
+  };
+  
+  const deleteResume = async (id) => {
+    if (!window.confirm("Delete this resume?")) return;
+    try {
+      await resumeAPI.delete(id);
+      setResumes(prev => prev.filter(r => r._id !== id));
+      showToast("Resume deleted");
+    } catch (err) {
+      showToast("Failed to delete: " + (err.response?.data?.message || err.message), "error");
+    }
+  };
 
   const analyzeVideo = async () => {
     if (!videoFile) return showToast("Please upload a video first","error");

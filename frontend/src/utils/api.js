@@ -112,15 +112,15 @@ export const adminAPI = {
 
 // ── SUPER ADMIN ───────────────────────────────────────────────
 export const superAdminAPI = {
-  // CORE FIXED FUNCTION
   decideOnFlag: (userId, data) =>
     api.post(`/super-admin/decide/${userId}`, data),
 
-  // Optional (only if backend exists)
-  getUsers:     (params) => api.get("/super-admin/users", { params }),
-  banUser:      (id, data) => api.put(`/super-admin/users/${id}/ban`, data),
-  restoreUser:  (id)       => api.put(`/super-admin/users/${id}/restore`),
-  getAnalytics: ()         => api.get("/super-admin/analytics"),
+  getAlerts: () => api.get("/super-admin/alerts"), // ✅ ADD
+
+  markAlertRead: (id) =>
+    api.patch(`/super-admin/alerts/${id}/read`), // ✅ ADD
+
+  getUsers: (params) => api.get("/super-admin/users", { params }),
 };
 
 export default api;
