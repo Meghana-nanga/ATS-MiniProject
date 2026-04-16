@@ -1,31 +1,33 @@
 const express = require("express");
-const router  = express.Router();
-const { protect, adminOnly } = require("../middleware/auth");
-const {
-  getAllCandidates, getCandidate, updateCandidateStatus,
-  removeCandidate, flagForSuperAdmin, flagAndRemove, restoreCandidate,
-  addCandidate, getRankings, getAnalytics, resendShortlistEmail, exportCSV
-} = require("../controllers/adminController");
+const router = express.Router();
+const { adminAuth } = require("../middleware/auth");
+const Alert = require("../models/Alert");
 
-router.use(protect, adminOnly);
-router.get ("/candidates",                       getAllCandidates);
-router.post("/candidates",                       addCandidate);
-router.get ("/candidates/export",                exportCSV);
-router.get ("/candidates/rankings",              getRankings);
-router.get ("/candidates/:id",                   getCandidate);
-router.put ("/candidates/:id/status",            updateCandidateStatus);
-router.put ("/candidates/:id/remove",            removeCandidate);
-router.put ("/candidates/:id/flag-superadmin",   flagForSuperAdmin);
-router.put ("/candidates/:id/flag",              flagAndRemove);
-router.put ("/candidates/:id/restore",           restoreCandidate);
-router.post("/candidates/:id/resend-email",      resendShortlistEmail);
-router.get ("/rankings",                         getRankings);
-router.get ("/analytics",                        getAnalytics);
-router.put("/flag/:id", flagForSuperAdmin);
-router.put("/status/:id", updateCandidateStatus);
-router.post("/resend-email/:id", protect, adminOnly, resendShortlistEmail);
-router.get(
-  "/export-csv",
-  exportCSV
-);
+// GET /api/admin/alerts
+router.get("/alerts", adminAuth, async (req, res) => {
+  try {
+    const alerts = await Alert.find({ type: "superadmin_decision" })
+      .populate(
+        "targetUser",
+        "name email status lastAtsScore fraudScore fraudReason targetRole createdAt"
+      )
+      .populate("createdBy", "name email")
+      .sort({ createdAt: -1 });
+
+    res.json({ alerts });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// PATCH /api/admin/alerts/:id/read
+router.patch("/alerts/:id/read", adminAuth, async (req, res) => {
+  try {
+    await Alert.findByIdAndUpdate(req.params.id, { isRead: true });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

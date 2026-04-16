@@ -6,7 +6,7 @@ const videoUpload = require("../middleware/videoUpload");  // Video files
 const {
   uploadResume,
   analyzeResume,
-  analyzeVideoResume,
+  analyzeVideo,   // ✅ FIXED
   getMyResumes,
   getResumeText,
   generateCoverLetter,
@@ -32,7 +32,8 @@ router.get("/",               getMyResumes);
 router.get("/:id/text",       getResumeText);
 
 // Video resume analyze — uses videoUpload middleware (100MB, mp4/mov/webm/avi)
-router.post("/video-analyze", videoUpload.single("video"), analyzeVideoResume);
+//router.post("/video-analyze", videoUpload.single("video"), analyzeVideoResume);
+router.post("/video-analyze", videoUpload.single("video"), analyzeVideo);
 
 // Delete resume
 router.delete("/:id",         deleteResume);

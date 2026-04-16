@@ -8,6 +8,9 @@ const path      = require("path");
 require("dotenv").config();
 
 const app = express();
+const superAdminRoutes = require("./routes/superAdminRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+
 
 // ── Middleware ─────────────────────────
 
@@ -47,7 +50,8 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/superadmin", require("./routes/superAdmin"));
 app.use("/api/jobs",      require("./routes/jobs"));
-app.use("/api/interview", require("./routes/interview"));
+app.use("/api/super-admin", superAdminRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Health check
 
@@ -89,10 +93,8 @@ mongoose.connect(process.env.MONGO_URI)
   console.log("✅ MongoDB connected");
 
   const User = require("./models/User");
-  const bcrypt = require("bcryptjs");
 
   const accounts = [
-
     {
       name: "Super Admin",
       email: "superadmin@hireiq.com",
@@ -100,7 +102,6 @@ mongoose.connect(process.env.MONGO_URI)
       role: "superadmin",
       status: "Active"
     },
-
     {
       name: "HR Admin",
       email: "admin@hireiq.com",
@@ -108,39 +109,26 @@ mongoose.connect(process.env.MONGO_URI)
       role: "admin",
       status: "Active"
     }
-
   ];
 
   for (const acc of accounts) {
-
-    const exists =
-      await User.findOne({ email: acc.email });
+    const exists = await User.findOne({ email: acc.email });
 
     if (!exists) {
-
-      const hashed =
-        await bcrypt.hash(acc.password, 12);
-
-      await User.create({
-        ...acc,
-        password: hashed
-      });
-
+      // Let the pre('save') hook handle hashing — do NOT hash manually here
+      await User.create(acc);
       console.log("✅ Seeded:", acc.email);
-
+    } else {
+      // Fix existing accounts that may have been double-hashed
+      // Re-save with plain password so the pre('save') hook hashes it correctly
+      exists.password = acc.password;
+      await exists.save();
     }
-
   }
 
-  const PORT =
-    process.env.PORT || 5000;
-
+  const PORT = process.env.PORT || 5000;
   app.listen(PORT, () =>
-
-    console.log(
-      "🚀 Server running on http://localhost:" + PORT
-    )
-
+    console.log("🚀 Server running on http://localhost:" + PORT)
   );
 
 })

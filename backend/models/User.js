@@ -36,6 +36,10 @@ const UserSchema = new mongoose.Schema({
   fraudFlaggedAt: { type: Date,    default: null },
   isFraudSuspected: { type: Boolean, default: false },
 
+  // Super Admin decision
+  superAdminDecision:   { type: String, default: null },  // "banned" | "cleared"
+  superAdminDecidedAt:  { type: Date,   default: null },
+
 }, { timestamps: true });
 
 // Hash password before save

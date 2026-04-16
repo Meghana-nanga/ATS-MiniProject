@@ -14,8 +14,8 @@ router.use(protect);
 
 router.get ("/profile",            getProfile);
 router.put ("/profile",            updateProfile);
-router.post("/apply",              applyToHR);           // KEY: triggers appearance in HR dashboard
-router.get ("/application-status", getApplicationStatus); // NEW: get HR application status
+router.post("/apply",              applyToHR);
+router.get ("/application-status", getApplicationStatus);
 router.post("/ats",                runAtsAnalysis);
 router.post("/video",              runVideoAnalysis);
 

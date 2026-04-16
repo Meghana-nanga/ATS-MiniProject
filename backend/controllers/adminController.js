@@ -139,25 +139,17 @@ exports.flagForSuperAdmin = async (req, res) => {
       },
       { new: true }
     );
-    await Alert.create({
-
-      type: "fraud_flag",
-    
-      title: `Fraud Flag: ${user.name}`,
-    
-      message:
-        reason ||
-        "HR admin flagged this user for review.",
-    
-      severity: "high",
-    
-      targetUser: user._id,
-    
-      createdBy: req.user._id
-    
-    });
 
     if (!user) return res.status(404).json({ success: false, message: "Candidate not found" });
+
+    await Alert.create({
+      type:      "fraud_flag",
+      title:     `Fraud Flag: ${user.name}`,
+      message:   reason.trim(),
+      severity:  "high",
+      targetUser: user._id,
+      createdBy: req.user._id,
+    });
 
     res.json({
       success: true,
@@ -251,48 +243,12 @@ exports.getAnalytics = async (req, res) => {
   try {
     const User = require("../models/User");
 
-    const [total, active, flagged, avgScoreRes, monthly, scoreRanges] = await Promise.all([
-      User.countDocuments({ role: "user" }),
-      User.countDocuments({ role: "user", isActive: true }),
-      User.countDocuments({ role: "user", isFraudFlagged: true }),
-      User.aggregate([
-        { $match: { role: "user", lastAtsScore: { $gt: 0 } } },
-        { $group: { _id: null, avg: { $avg: "$lastAtsScore" } } }
-      ]),
-      User.aggregate([
-        { $match: { role: "user" } },
-        { $group: { _id: { month: { $month: "$createdAt" }, year: { $year: "$createdAt" } }, count: { $sum: 1 } } },
-        { $sort: { "_id.year": 1, "_id.month": 1 } },
-        { $limit: 12 }
-      ]),
-      User.aggregate([
-        { $match: { role: "user", lastAtsScore: { $gt: 0 } } },
-        { $bucket: {
-            groupBy: "$lastAtsScore",
-            boundaries: [0, 40, 60, 80, 101],
-            default: "other",
-            output: { count: { $sum: 1 } }
-        }}
-      ])
-    ]);
-
-    // Map bucket boundaries to the _id values the frontend expects (0,40,60,80)
-    const rangeMapped = [
-      { _id: 0,  count: scoreRanges.find(r => r._id === 0)?.count  || 0 },
-      { _id: 40, count: scoreRanges.find(r => r._id === 40)?.count || 0 },
-      { _id: 60, count: scoreRanges.find(r => r._id === 60)?.count || 0 },
-      { _id: 80, count: scoreRanges.find(r => r._id === 80)?.count || 0 },
-    ];
+    const totalUsers = await User.countDocuments();
 
     res.json({
       success: true,
       analytics: {
-        total,
-        active,
-        flagged,
-        avgScore: Math.round(avgScoreRes[0]?.avg || 0),
-        monthly,
-        scoreRanges: rangeMapped,
+        totalUsers
       }
     });
 

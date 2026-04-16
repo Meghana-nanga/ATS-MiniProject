@@ -208,6 +208,72 @@ exports.getFraudReport = async (req, res) => {
   } catch (err) { res.status(500).json({ success:false, message:err.message }); }
 };
 
+// ── DECIDE ON FRAUD FLAG (Super Admin → HR) ──────────────────────────────────
+// action: "ban" | "clear"
+exports.decideOnFlag = async (req, res) => {
+  try {
+    const { action, reason } = req.body;
+    if (!["ban", "clear"].includes(action))
+      return res.status(400).json({ success: false, message: "action must be 'ban' or 'clear'" });
+
+    let updateFields, alertTitle, alertMsg, alertType;
+
+    if (action === "ban") {
+      updateFields = {
+        isActive:       false,
+        status:         "Banned",
+        isFraudFlagged: true,
+        fraudReason:    reason || "Fraud confirmed and banned by Super Admin",
+        notes:          `Super Admin Decision: BANNED — ${reason || "fraud confirmed"}`,
+        superAdminDecision: "banned",
+        superAdminDecidedAt: new Date(),
+      };
+      alertType  = "superadmin_decision";
+      alertTitle = "Super Admin Decision: BANNED";
+      alertMsg   = reason || "Super Admin reviewed the flag and banned this user for fraud.";
+    } else {
+      updateFields = {
+        isActive:       true,
+        status:         "Active",
+        isFraudFlagged: false,
+        fraudReason:    null,
+        fraudFlaggedBy: null,
+        fraudFlaggedAt: null,
+        notes:          `Super Admin Decision: CLEARED — ${reason || "not fraud"}`,
+        superAdminDecision: "cleared",
+        superAdminDecidedAt: new Date(),
+      };
+      alertType  = "superadmin_decision";
+      alertTitle = "Super Admin Decision: CLEARED";
+      alertMsg   = reason || "Super Admin reviewed the flag and cleared this user — not fraud.";
+    }
+
+    const user = await User.findByIdAndUpdate(req.params.id, updateFields, { new: true });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    // Create alert visible to HR admins
+    await Alert.create({
+      type:       alertType,
+      title:      `${alertTitle}: ${user.name}`,
+      message:    alertMsg,
+      severity:   action === "ban" ? "high" : "medium",
+      targetUser: user._id,
+      createdBy:  req.user._id,
+    });
+
+    // If banned, reject all pending applications
+    if (action === "ban") {
+      const Application = require("../models/Application");
+      await Application.updateMany(
+        { user: req.params.id, status: { $in: ["Applied", "Under Review", "Shortlisted"] } },
+        { status: "Rejected", rejectionReason: "Account banned for fraud by Super Admin" }
+      );
+    }
+
+    res.json({ success: true, message: `User ${action === "ban" ? "banned" : "cleared"}`, user: user.toPublic() });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+};
+
 // GET alerts
 
 exports.getAlerts = async (req, res) => {

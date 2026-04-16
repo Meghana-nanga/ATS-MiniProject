@@ -18,52 +18,63 @@ function StatusTag({s}){
 export default function SuperAdminDashboard() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
-  const [tab, setTab]                     = useState("alerts");
-  const [candidates, setCandidates]       = useState([]);
-  const [flaggedCandidates, setFlagged]   = useState([]);
-  const [analytics, setAnalytics]         = useState(null);
-  const [loading, setLoading]             = useState(false);
-  const [statusFilter, setStatusFilter]   = useState("all");
-  const [search, setSearch]               = useState("");
-  const [toast, setToast]                 = useState("");
-  const [toastType, setToastType]         = useState("success");
-  const [sidebarOpen, setSidebarOpen]     = useState(false);
-  const [confirmModal, setConfirmModal]   = useState(null); // { candidate, action }
-  const [detailModal, setDetailModal]     = useState(null);
+  const [tab, setTab]                   = useState("alerts");
+  const [candidates, setCandidates]     = useState([]);
+  const [alerts, setAlerts]             = useState([]);
+  const [unreadCount, setUnreadCount]   = useState(0);
+  const [analytics, setAnalytics]       = useState(null);
+  const [loading, setLoading]           = useState(false);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [search, setSearch]             = useState("");
+  const [toast, setToast]               = useState("");
+  const [toastType, setToastType]       = useState("success");
+  const [sidebarOpen, setSidebarOpen]   = useState(false);
+  const [confirmModal, setConfirmModal] = useState(null);
+  const [detailModal, setDetailModal]   = useState(null);
+  const [decisionNote, setDecisionNote] = useState("");
 
   const showToast = (msg, type="success") => {
     setToast(msg); setToastType(type);
     setTimeout(()=>setToast(""), 3500);
   };
 
-  const loadAll = useCallback(async () => {
+  // ── Load fraud_flag alerts sent by HR ─────────────────────────────────────
+  const loadAlerts = useCallback(async () => {
+    setAlertsLoading(true);
+    try {
+      const res = await superAdminAPI.getAlerts();
+      const all = res.data.alerts || [];
+      // Super Admin sees only fraud_flag alerts (escalated by HR)
+      const fraudAlerts = all.filter(a => a.type === "fraud_flag");
+      setAlerts(fraudAlerts);
+      setUnreadCount(fraudAlerts.filter(a => !a.isRead).length);
+    } catch(err) {
+      showToast("Failed to load alerts", "error");
+    } finally { setAlertsLoading(false); }
+  }, []);
+
+  const loadCandidates = useCallback(async () => {
     setLoading(true);
     try {
       const [candRes, analyticsRes] = await Promise.all([
-        superAdminAPI.getUsers({ limit: 200 }),
+        adminAPI.getCandidates({ limit: 200 }),
         superAdminAPI.getAnalytics(),
       ]);
-      const all = candRes.data.users || [];
-      setCandidates(all);
-      setFlagged(all.filter(u => u.isFraudFlagged || u.status === "Flagged"));
-      if (analyticsRes.data.analytics) {
-        const a = analyticsRes.data.analytics;
-        // Normalize analytics shape for the dashboard
-        setAnalytics({
-          total:       a.users?.total    || 0,
-          active:      a.users?.active   || 0,
-          flagged:     a.users?.fraud    || 0,
-          avgScore:    a.avgScore        || 0,
-          monthly:     a.monthly         || [],
-          scoreRanges: a.scoreRanges     || [],
-        });
-      }
+      setCandidates(candRes.data.users || []);
+      if (analyticsRes.data.analytics) setAnalytics(analyticsRes.data.analytics);
     } catch(err) {
-      showToast("Failed to load data","error");
+      showToast("Failed to load candidates", "error");
     } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => {
+    loadAlerts();
+    loadCandidates();
+    // Poll every 30s for new HR escalations
+    const interval = setInterval(loadAlerts, 30000);
+    return () => clearInterval(interval);
+  }, [loadAlerts, loadCandidates]);
 
   const filtered = candidates.filter(c => {
     const matchStatus = statusFilter === "all" || c.status === statusFilter || (statusFilter === "Flagged" && c.isFraudFlagged);
@@ -71,12 +82,53 @@ export default function SuperAdminDashboard() {
     return matchStatus && matchSearch;
   });
 
-  // Super admin can ban, restore, or clear fraud flag
-  const handleBan = async (id, reason) => {
+  const flaggedCandidates = candidates.filter(c => c.isFraudFlagged || c.status === "Flagged");
+
+  // ── Mark alert as read ────────────────────────────────────────────────────
+  const markRead = async (alertId) => {
+    try { await superAdminAPI.markAlertRead(alertId); } catch {}
+    setAlerts(prev => prev.map(a => a._id === alertId ? {...a, isRead: true} : a));
+    setUnreadCount(prev => Math.max(0, prev - 1));
+  };
+
+  // ── Super Admin decision: ban or clear — notifies HR via superadmin_decision alert ──
+  const handleDecide = async (action) => {
+    if (!confirmModal) return;
+    const { alertItem } = confirmModal;
+    const userId = alertItem?.targetUser?._id;
+    if (!userId) { showToast("Cannot find user", "error"); return; }
     try {
-      await superAdminAPI.banUser(id, { reason: reason || "Banned by Super Admin" });
-      showToast("🚫 User banned and removed");
-      loadAll();
+      // This API call should:
+      // 1. Ban/restore the user
+      // 2. Create an Alert { type: "superadmin_decision", targetUser: userId, title, message } for HR
+      await superAdminAPI.decideOnFlag(userId, {
+        action,
+        reason: decisionNote,
+        alertId: alertItem._id,  // original fraud_flag alert to close
+      });
+      // Mark the source fraud_flag alert as read/resolved
+      if (alertItem._id) await superAdminAPI.markAlertRead(alertItem._id);
+
+      showToast(
+        action === "ban"
+          ? "🚫 User banned — HR has been notified and must take final action"
+          : "✅ Flag cleared — HR has been notified and will shortlist or reject"
+      );
+      setConfirmModal(null);
+      setDecisionNote("");
+      loadAlerts();
+      loadCandidates();
+    } catch(err) {
+      showToast("Action failed: " + (err.response?.data?.message || err.message), "error");
+    }
+  };
+
+  // ── Direct ban/restore from Candidates tab ────────────────────────────────
+  const handleDirectBan = async (id) => {
+    try {
+      await superAdminAPI.banUser(id, { reason: "Banned by Super Admin" });
+      showToast("🚫 User banned");
+      loadCandidates();
     } catch { showToast("Action failed","error"); }
   };
 
@@ -84,30 +136,22 @@ export default function SuperAdminDashboard() {
     try {
       await superAdminAPI.restoreUser(id);
       showToast("✅ User restored");
-      loadAll();
-    } catch { showToast("Action failed","error"); }
-  };
-
-  const handleClearFraud = async (id) => {
-    try {
-      await superAdminAPI.restoreUser(id);
-      showToast("✅ Fraud flag cleared — user marked Active");
-      loadAll();
+      loadCandidates();
     } catch { showToast("Action failed","error"); }
   };
 
   const pieData = analytics ? [
-    {name:"Excellent 80+", value:analytics.scoreRanges?.find(r=>r._id===80)?.count||0, color:"#059669"},
-    {name:"Good 60–79",    value:analytics.scoreRanges?.find(r=>r._id===60)?.count||0, color:"#1B5EEA"},
-    {name:"Average 40–59", value:analytics.scoreRanges?.find(r=>r._id===40)?.count||0, color:"#D97706"},
-    {name:"Low 0–39",      value:analytics.scoreRanges?.find(r=>r._id===0)?.count||0,  color:"#DC2626"},
-  ] : [];
+    {name:"Active",      value:analytics.users?.active||0,  color:"#059669"},
+    {name:"Fraud Flagged",value:analytics.users?.fraud||0,  color:"#DC2626"},
+    {name:"Banned",      value:analytics.users?.banned||0,  color:"#9CA3AF"},
+    {name:"Admins",      value:analytics.users?.admins||0,  color:"#1B5EEA"},
+  ].filter(p=>p.value>0) : [];
   const barData = analytics?.monthly?.map(m=>({name:MONTHS[m._id.month-1],count:m.count}))||[];
 
   const tabs = [
-    { id:"alerts",    icon:"🚨", label:"Fraud Alerts", badge: flaggedCandidates.length },
-    { id:"candidates",icon:"👥", label:"All Candidates" },
-    { id:"analytics", icon:"📈", label:"Analytics" },
+    { id:"alerts",     icon:"🚨", label:"Fraud Alerts",   badge: unreadCount },
+    { id:"candidates", icon:"👥", label:"All Candidates" },
+    { id:"analytics",  icon:"📈", label:"Analytics" },
   ];
 
   return (
@@ -144,8 +188,7 @@ export default function SuperAdminDashboard() {
 
         <div style={{padding:"14px 16px",marginTop:"auto",borderTop:"1px solid var(--border)"}}>
           <div style={{fontSize:11.5,color:"var(--muted)",lineHeight:1.6}}>
-            <strong style={{color:"var(--text)"}}>Super Admin</strong> — you have full authority to
-            ban accounts, clear fraud flags, and override HR decisions.
+            <strong style={{color:"var(--text)"}}>Super Admin</strong> — review HR fraud flags, ban or clear candidates. Your decision is sent back to HR who makes the final shortlist/reject call.
           </div>
         </div>
       </div>
@@ -155,7 +198,7 @@ export default function SuperAdminDashboard() {
           <button className="hamburger topbar-hamburger" onClick={()=>setSidebarOpen(true)}>☰</button>
           <div className="topbar-title">{tabs.find(t=>t.id===tab)?.label||"Dashboard"}</div>
           <div className="topbar-right">
-            {tab==="candidates"&&(
+            {tab==="candidates" && (
               <div className="search-wrap">
                 <span className="search-icon">🔍</span>
                 <input className="search-input" placeholder="Search..." value={search}
@@ -174,91 +217,114 @@ export default function SuperAdminDashboard() {
         <div className="content fade-in">
 
           {/* ── FRAUD ALERTS ── */}
-          {tab==="alerts"&&(
+          {tab==="alerts" && (
             <div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
                 <div>
-                  <h2 style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,marginBottom:4}}>Fraud Alerts</h2>
-                  <p style={{fontSize:14,color:"var(--muted)"}}>Candidates flagged by HR admins for suspicious activity</p>
+                  <h2 style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,marginBottom:4}}>Fraud Alerts from HR</h2>
+                  <p style={{fontSize:14,color:"var(--muted)"}}>
+                    Review flags sent by HR admins. Your decision (ban/clear) is sent back to HR who makes the final hiring call.
+                  </p>
                 </div>
-                <button className="btn btn-outline btn-sm" onClick={()=>{loadAll();showToast("Refreshed");}}>↺ Refresh</button>
+                <button className="btn btn-outline btn-sm" onClick={()=>{loadAlerts();showToast("Refreshed");}}>↺ Refresh</button>
               </div>
 
-              {loading ? (
+              {/* Flow explanation banner */}
+              <div style={{
+                background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:"var(--r12)",
+                padding:"12px 16px", marginBottom:20, fontSize:13, color:"#92400E", lineHeight:1.7
+              }}>
+                <strong>Workflow:</strong> HR flags a suspect resume → You review and decide →
+                Your decision is sent back to HR → <strong>HR makes the final shortlist/reject decision.</strong>
+              </div>
+
+              {alertsLoading ? (
                 <div style={{textAlign:"center",padding:60}}><div className="spinner" style={{margin:"0 auto"}}></div></div>
-              ) : flaggedCandidates.length === 0 ? (
+              ) : alerts.length === 0 ? (
                 <div className="card" style={{textAlign:"center",padding:"60px 24px"}}>
                   <div style={{fontSize:48,marginBottom:16}}>✅</div>
                   <h3 style={{fontSize:18,marginBottom:8,fontFamily:"Fraunces,serif"}}>No Fraud Alerts</h3>
-                  <p style={{color:"var(--muted)",fontSize:14}}>No candidates have been flagged by HR admins.</p>
+                  <p style={{color:"var(--muted)",fontSize:14}}>No candidates have been flagged by HR admins yet.</p>
                 </div>
               ) : (
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                  {flaggedCandidates.map((c,i)=>(
-                    <div key={c._id||i} style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:"var(--r16)",padding:"20px 24px"}}>
-                      <div style={{display:"flex",alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
-                        <div style={{fontSize:28,flexShrink:0}}>🚨</div>
-                        <div style={{flex:1,minWidth:200}}>
-                          {/* Header */}
-                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                            <div>
-                              <div style={{fontWeight:700,fontSize:16,color:"#B91C1C"}}>{c.name}</div>
-                              <div style={{fontSize:13,color:"#64748B",marginTop:2}}>{c.email}</div>
+                  {alerts.map((alert,i)=>{
+                    const c = alert.targetUser || {};
+                    const isUnread = !alert.isRead;
+                    return (
+                      <div key={alert._id||i}
+                        style={{
+                          background: isUnread ? "#FEF2F2" : "#fff",
+                          border:`1px solid ${isUnread ? "#FECACA" : "var(--border)"}`,
+                          borderRadius:"var(--r16)", padding:"20px 24px", transition:"background .3s"
+                        }}>
+                        <div style={{display:"flex",alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
+                          <div style={{fontSize:28,flexShrink:0}}>{isUnread?"🚨":"📋"}</div>
+                          <div style={{flex:1,minWidth:200}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                              <div>
+                                <div style={{fontWeight:700,fontSize:16,color:"#B91C1C"}}>{c.name||"Unknown User"}</div>
+                                <div style={{fontSize:13,color:"#64748B",marginTop:2}}>{c.email||""}</div>
+                                <div style={{fontSize:11,color:"#94A3B8",marginTop:3}}>
+                                  Flagged by HR on {new Date(alert.createdAt).toLocaleString()}
+                                  {alert.createdBy?.name && ` · ${alert.createdBy.name}`}
+                                </div>
+                              </div>
+                              <StatusTag s={c.status}/>
                             </div>
-                            <StatusTag s={c.status}/>
-                          </div>
 
-                          {/* Scores */}
-                          <div style={{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap"}}>
-                            <div style={{background:"rgba(185,28,28,.08)",borderRadius:"var(--r8)",padding:"8px 14px",textAlign:"center"}}>
-                              <div style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,color:"#B91C1C"}}>{c.fraudScore||"?"}</div>
-                              <div style={{fontSize:10,fontWeight:700,color:"#B91C1C",textTransform:"uppercase",letterSpacing:1}}>Fraud Score</div>
-                            </div>
-                            <div style={{background:"rgba(0,0,0,.04)",borderRadius:"var(--r8)",padding:"8px 14px",textAlign:"center"}}>
-                              <div style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,color:scColor(c.lastAtsScore||0)}}>{c.lastAtsScore||0}</div>
-                              <div style={{fontSize:10,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1}}>ATS Score</div>
-                            </div>
-                            <div style={{background:"rgba(0,0,0,.04)",borderRadius:"var(--r8)",padding:"8px 14px",textAlign:"center"}}>
-                              <div style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,color:"var(--text)"}}>{new Date(c.createdAt||Date.now()).toLocaleDateString()}</div>
-                              <div style={{fontSize:10,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1}}>Joined</div>
-                            </div>
-                          </div>
+                            {/* Scores */}
+                            {(c.fraudScore || c.lastAtsScore) && (
+                              <div style={{display:"flex",gap:10,marginBottom:12}}>
+                                {c.fraudScore != null && (
+                                  <div style={{background:"#FEF2F2",borderRadius:"var(--r8)",padding:"8px 12px",textAlign:"center",minWidth:80}}>
+                                    <div style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,color:"#B91C1C"}}>{c.fraudScore}</div>
+                                    <div style={{fontSize:10,color:"#9CA3AF",fontWeight:600}}>FRAUD /100</div>
+                                  </div>
+                                )}
+                                {c.lastAtsScore != null && (
+                                  <div style={{background:"#F0F9FF",borderRadius:"var(--r8)",padding:"8px 12px",textAlign:"center",minWidth:80}}>
+                                    <div style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,color:scColor(c.lastAtsScore)}}>{c.lastAtsScore}</div>
+                                    <div style={{fontSize:10,color:"#9CA3AF",fontWeight:600}}>ATS /100</div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
-                          {/* Reason from HR */}
-                          {c.fraudReason && (
+                            {/* HR's report */}
                             <div style={{background:"#fff",border:"1px solid #FECACA",borderRadius:"var(--r8)",padding:"12px 14px",marginBottom:14}}>
                               <div style={{fontSize:11,fontWeight:700,color:"#B91C1C",textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>HR Admin's Report</div>
-                              <div style={{fontSize:13.5,color:"#374151",lineHeight:1.65}}>{c.fraudReason}</div>
+                              <div style={{fontSize:13.5,color:"#374151",lineHeight:1.65}}>{alert.message}</div>
                             </div>
-                          )}
 
-                          {/* Super Admin actions */}
-                          <div style={{borderTop:"1px solid #FECACA",paddingTop:14,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                            <span style={{fontSize:12,color:"#92400E",fontWeight:600}}>Your decision:</span>
-                            <button className="btn btn-sm btn-danger"
-                              onClick={()=>setConfirmModal({candidate:c, action:"ban"})}>
-                              🚫 Ban User
-                            </button>
-                            <button className="btn btn-sm btn-success"
-                              onClick={()=>setConfirmModal({candidate:c, action:"clear"})}>
-                              ✅ Clear — Not Fraud
-                            </button>
-                            <button className="btn btn-sm btn-outline"
-                              onClick={()=>setDetailModal(c)}>
-                              👁 View Details
-                            </button>
+                            {/* Decision buttons */}
+                            <div style={{borderTop:"1px solid #FECACA",paddingTop:14,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                              <span style={{fontSize:12,color:"#92400E",fontWeight:600}}>Your decision (sent to HR):</span>
+                              <button className="btn btn-sm btn-danger"
+                                onClick={()=>{if(isUnread)markRead(alert._id);setDecisionNote("");setConfirmModal({alertItem:alert,action:"ban"});}}>
+                                🚫 Ban User
+                              </button>
+                              <button className="btn btn-sm btn-success"
+                                onClick={()=>{if(isUnread)markRead(alert._id);setDecisionNote("");setConfirmModal({alertItem:alert,action:"clear"});}}>
+                                ✅ Clear — Not Fraud
+                              </button>
+                              <button className="btn btn-sm btn-outline"
+                                onClick={()=>{setDetailModal(c);if(isUnread)markRead(alert._id);}}>
+                                👁 View Details
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
 
           {/* ── ALL CANDIDATES ── */}
-          {tab==="candidates"&&(
+          {tab==="candidates" && (
             <>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
                 <div className="chip-row">
@@ -314,23 +380,11 @@ export default function SuperAdminDashboard() {
                           <td style={{fontSize:12,color:"var(--muted)"}}>{new Date(c.createdAt).toLocaleDateString()}</td>
                           <td>
                             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                              <button className="btn btn-sm btn-ghost" onClick={()=>setDetailModal(c)}>👁</button>
                               {c.isActive!==false ? (
-                                <button className="btn btn-sm btn-danger"
-                                  onClick={()=>setConfirmModal({candidate:c,action:"ban"})}>
-                                  🚫 Ban
-                                </button>
+                                <button className="btn btn-sm btn-danger" onClick={()=>handleDirectBan(c._id)}>🚫 Ban</button>
                               ):(
-                                <button className="btn btn-sm btn-success"
-                                  onClick={()=>handleRestore(c._id)}>
-                                  ♻️ Restore
-                                </button>
-                              )}
-                              {c.isFraudFlagged && (
-                                <button className="btn btn-sm btn-outline"
-                                  style={{color:"var(--green)",borderColor:"var(--green)"}}
-                                  onClick={()=>setConfirmModal({candidate:c,action:"clear"})}>
-                                  ✅ Clear
-                                </button>
+                                <button className="btn btn-sm btn-success" onClick={()=>handleRestore(c._id)}>♻️ Restore</button>
                               )}
                             </div>
                           </td>
@@ -344,11 +398,16 @@ export default function SuperAdminDashboard() {
           )}
 
           {/* ── ANALYTICS ── */}
-          {tab==="analytics"&&(
+          {tab==="analytics" && (
             analytics?(
               <>
                 <div className="metrics-grid">
-                  {[["Total",analytics.total,"Registered",""],["Active",analytics.active,"Active now","mc-up"],["Avg ATS",analytics.avgScore,"Platform avg",""],["Fraud Flagged",analytics.flagged,"By HR","mc-dn"]].map(([l,v,s,cls])=>(
+                  {[
+                    ["Total Users", analytics.users?.total||0, "Registered",""],
+                    ["Active",      analytics.users?.active||0,"Active now","mc-up"],
+                    ["Avg ATS",     analytics.avgScore||0,     "Platform avg",""],
+                    ["Fraud Flagged",analytics.users?.fraud||0,"By HR","mc-dn"],
+                  ].map(([l,v,s,cls])=>(
                     <div className="mc" key={l}><div className="mc-label">{l}</div>
                       <div className="mc-value" style={{color:cls==="mc-dn"&&v>0?"var(--red)":undefined}}>{v}</div>
                       <div className={"mc-sub "+cls}>{s}</div></div>
@@ -356,7 +415,7 @@ export default function SuperAdminDashboard() {
                 </div>
                 <div className="grid-2">
                   <div className="card">
-                    <div className="card-hd"><span className="card-title">ATS Score Distribution</span></div>
+                    <div className="card-hd"><span className="card-title">User Breakdown</span></div>
                     <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
                       <ResponsiveContainer width={180} height={180}>
                         <PieChart><Pie data={pieData} cx={85} cy={85} innerRadius={48} outerRadius={78} dataKey="value" paddingAngle={3}>
@@ -393,49 +452,65 @@ export default function SuperAdminDashboard() {
         </div>
       </div>
 
-      {/* Confirm modal — Ban or Clear */}
-      {confirmModal&&(
-        <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setConfirmModal(null);}}>
-          <div className="modal-box" style={{maxWidth:440}}>
+      {/* ── DECISION CONFIRM MODAL ── */}
+      {confirmModal && (
+        <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setConfirmModal(null);setDecisionNote("");}}}>
+          <div className="modal-box" style={{maxWidth:460}}>
             <div className="modal-hd">
               <span className="modal-title">
-                {confirmModal.action==="ban"?"🚫 Ban User":"✅ Clear Fraud Flag"}
+                {confirmModal.action==="ban"?"🚫 Confirm Ban":"✅ Confirm Clear"}
               </span>
-              <button className="btn btn-ghost btn-sm" onClick={()=>setConfirmModal(null)}>✕</button>
+              <button className="btn btn-ghost btn-sm" onClick={()=>{setConfirmModal(null);setDecisionNote("");}}>✕</button>
             </div>
-            <div style={{fontSize:14,color:"var(--muted)",lineHeight:1.7,marginBottom:20}}>
+
+            <div style={{fontSize:14,color:"var(--muted)",lineHeight:1.7,marginBottom:16}}>
               {confirmModal.action==="ban"
-                ? <>Are you sure you want to <strong style={{color:"#B91C1C"}}>permanently ban</strong> <strong>{confirmModal.candidate.name}</strong>? They will be removed from the platform and cannot log in.</>
-                : <>Clear the fraud flag for <strong>{confirmModal.candidate.name}</strong>? This will mark them as <strong style={{color:"#059669"}}>Active</strong> and remove the fraud flag set by HR.</>
+                ? <>You are about to <strong style={{color:"#B91C1C"}}>permanently ban</strong> <strong>{confirmModal.alertItem?.targetUser?.name}</strong>. <br/>HR will be notified and must make the final status decision.</>
+                : <>You are clearing the fraud flag for <strong>{confirmModal.alertItem?.targetUser?.name}</strong>. <br/>They will be restored to <strong style={{color:"#059669"}}>Active</strong> and HR will decide whether to shortlist or reject.</>
               }
             </div>
+
+            {/* Flow reminder */}
+            <div style={{
+              background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:"var(--r8)",
+              padding:"10px 14px",fontSize:12.5,color:"#92400E",marginBottom:16,lineHeight:1.6
+            }}>
+              ⚡ Your decision will be sent as an alert to HR. <strong>HR will then shortlist or reject the candidate.</strong>
+            </div>
+
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:13,fontWeight:600,display:"block",marginBottom:6}}>Decision note (sent to HR):</label>
+              <textarea
+                style={{width:"100%",padding:"8px 10px",borderRadius:"var(--r8)",border:"1px solid var(--border)",fontSize:13,resize:"vertical",minHeight:72,boxSizing:"border-box"}}
+                placeholder={confirmModal.action==="ban"
+                  ?"e.g. Verified duplicate resume and fabricated experience..."
+                  :"e.g. Reviewed profile — legitimate candidate, credentials verified..."}
+                value={decisionNote}
+                onChange={e=>setDecisionNote(e.target.value)}
+              />
+            </div>
+
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button className="btn btn-ghost" onClick={()=>setConfirmModal(null)}>Cancel</button>
+              <button className="btn btn-ghost" onClick={()=>{setConfirmModal(null);setDecisionNote("");}}>Cancel</button>
               {confirmModal.action==="ban"?(
-                <button className="btn btn-danger" onClick={()=>{
-                  handleBan(confirmModal.candidate._id,"Banned by Super Admin after fraud review");
-                  setConfirmModal(null);
-                }}>Confirm Ban</button>
+                <button className="btn btn-danger" onClick={()=>handleDecide("ban")}>🚫 Ban & Notify HR</button>
               ):(
-                <button className="btn btn-success" onClick={()=>{
-                  handleClearFraud(confirmModal.candidate._id);
-                  setConfirmModal(null);
-                }}>Confirm Clear</button>
+                <button className="btn btn-success" onClick={()=>handleDecide("clear")}>✅ Clear & Notify HR</button>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Detail modal */}
-      {detailModal&&(
+      {/* ── Detail modal ── */}
+      {detailModal && (
         <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setDetailModal(null);}}>
           <div className="modal-box" style={{maxWidth:480}}>
             <div className="modal-hd">
               <span className="modal-title">👁 Candidate Details</span>
               <button className="btn btn-ghost btn-sm" onClick={()=>setDetailModal(null)}>✕</button>
             </div>
-            {[["Name",detailModal.name],["Email",detailModal.email],["Role",detailModal.targetRole||"—"],["Status",detailModal.status],["ATS Score",(detailModal.lastAtsScore||0)+"/100"],["Fraud Score",(detailModal.fraudScore||0)+"/100"],["Fraud Reason",detailModal.fraudReason||"None"],["Joined",new Date(detailModal.createdAt).toLocaleString()]].map(([l,v])=>(
+            {[["Name",detailModal.name],["Email",detailModal.email],["Role",detailModal.targetRole||"—"],["Status",detailModal.status],["ATS Score",(detailModal.lastAtsScore||0)+"/100"],["Fraud Score",(detailModal.fraudScore||0)+"/100"],["Fraud Reason",detailModal.fraudReason||"None"],["Joined",new Date(detailModal.createdAt||Date.now()).toLocaleString()]].map(([l,v])=>(
               <div key={l} style={{display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid var(--border)",fontSize:13.5}}>
                 <span style={{fontWeight:600,color:"var(--muted)",minWidth:110}}>{l}</span>
                 <span style={{color:"var(--text)"}}>{v}</span>
@@ -443,13 +518,12 @@ export default function SuperAdminDashboard() {
             ))}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:20}}>
               <button className="btn btn-ghost" onClick={()=>setDetailModal(null)}>Close</button>
-              <button className="btn btn-danger" onClick={()=>{setConfirmModal({candidate:detailModal,action:"ban"});setDetailModal(null);}}>🚫 Ban User</button>
             </div>
           </div>
         </div>
       )}
 
-      {toast&&(
+      {toast && (
         <div className={`toast${toastType==="error"?" toast-error":""}`}>{toast}</div>
       )}
     </div>

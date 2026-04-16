@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { resumeAPI, authAPI, userAPI, interviewAPI } from "../utils/api";
+import { resumeAPI, authAPI, userAPI } from "../utils/api";
 
 function initials(n=""){ return n.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2); }
 function scColor(s){ return s>=80?"#059669":s>=60?"#1B5EEA":s>=40?"#D97706":"#DC2626"; }
@@ -307,8 +307,6 @@ export default function UserDashboard() {
   const [applying, setApplying]           = useState(false);
   const [applied, setApplied]             = useState(user?.appliedToHR || false);
   const [expandedJob, setExpandedJob]     = useState(null);
-  const [myInterviews, setMyInterviews]   = useState([]);
-  const [interviewsLoaded, setInterviewsLoaded] = useState(false);
   const [videoFile, setVideoFile]         = useState(null);
   const [videoAnalyzing, setVideoAnalyzing] = useState(false);
   const [videoResult, setVideoResult]     = useState(null);
@@ -329,11 +327,6 @@ export default function UserDashboard() {
   };
 
   useEffect(() => { if(tab==="history" || tab==="apply") loadHistory(); }, [tab]);
-  useEffect(() => {
-    if((tab==="interview" || tab==="apply") && !interviewsLoaded) {
-      interviewAPI.getMy().then(({data})=>{ setMyInterviews(data.interviews||[]); setInterviewsLoaded(true); }).catch(()=>{});
-    }
-  }, [tab, interviewsLoaded]);
 
   const handleFile = async file => {
     if (!file) return;
@@ -350,6 +343,207 @@ export default function UserDashboard() {
     } finally { setUploading(false); }
   };
 
+  // ── Client-side fraud detection (mirrors backend atsEngine.detectFraud) ─────
+  const detectFraudClientSide = (text) => {
+    if (!text || text.trim().length < 100) return { isFraudSuspected:false, fraudScore:0, flags:[], analysis:"Insufficient text." };
+
+    const flags   = [];
+    const norm    = text.toLowerCase();
+    const curYear = new Date().getFullYear();
+
+    // ── Extract all 4-digit year ranges (only 19xx or 20xx) ──────────────────
+    const rangeRx = /\b((?:19|20)\d{2})\s*(?:[-–—to]+\s*)?((?:19|20)\d{2}|present|current|ongoing|now)\b/gi;
+    const allRanges = [];
+    let m;
+    while ((m = rangeRx.exec(text)) !== null) {
+      const start = parseInt(m[1]);
+      const end   = /present|current|ongoing|now/i.test(m[2]) ? curYear : parseInt(m[2]);
+      if (start >= 1990 && start <= curYear + 5 && end >= start && end <= curYear + 5)
+        allRanges.push({ start, end, raw: m[0].trim() });
+    }
+
+    // ── Separate education ranges from work ranges ────────────────────────────
+    const textLines = text.split("\n");
+    // Strategy: if the range appears on a line that contains a known company/role pattern
+    // it's work; if it appears near degree keywords it's education
+    const eduKeywords = /\b(?:b\.?tech|b\.?e\.?|b\.?sc|m\.?tech|mba|m\.?sc|phd|bachelor|master|diploma|12th|10th|ssc|hsc|higher secondary|secondary school)\b/i;
+    const companyKeywords = /\b(?:pvt|ltd|inc|corp|technologies|solutions|systems|services|software|consulting|engineer|developer|analyst|intern|manager|associate|trainee)\b/i;
+
+    const isEduRange = (raw) => {
+      // Find the line containing this range
+      const rawStart = raw.split(/[\s–-]/)[0];
+      const lineIdx = textLines.findIndex(l => l.includes(rawStart) && (l.includes("–") || l.includes("-") || /present|current/i.test(l)));
+      if (lineIdx === -1) return false;
+      // Check the line itself and 2 lines above (company/role context)
+      const context = textLines.slice(Math.max(0, lineIdx-2), lineIdx+1).join(" ");
+      const hasEdu  = eduKeywords.test(context);
+      const hasWork = companyKeywords.test(context);
+      // Only classify as education if degree keyword present AND no company keyword
+      return hasEdu && !hasWork;
+    };
+
+    const eduRanges  = allRanges.filter(r => isEduRange(r.raw));
+    const workRanges = allRanges.filter(r => !isEduRange(r.raw));
+
+    // ── Graduation year: find years near degree/university keywords ────────────
+    const eduYears = eduRanges.flatMap(r => [r.start, r.end]).filter(y => y >= 2000 && y <= curYear + 5);
+
+    // Pattern 1: degree keyword and year on same line (e.g. "B.Tech CSE 2017")
+    const dyRx = /\b(?:b\.?tech|b\.?e\.?|b\.?sc|m\.?tech|mba|m\.?sc|phd|bachelor|master|degree|diploma|graduating|expected)\b[^.\n]{0,120}?\b((?:19|20)\d{2})\b/gi;
+    while ((m = dyRx.exec(text)) !== null) eduYears.push(parseInt(m[1]));
+
+    // Pattern 2: year on its own line within 3 lines of a degree/uni keyword
+    // (handles PDF extraction where "B.Tech\nIIT Hyderabad\n2017" is split)
+    const allLines = text.split("\n").map(l => l.trim());
+    const degKwRx  = /\b(?:b\.?tech|b\.?e\.?|b\.?sc|m\.?tech|mba|bachelor|master|degree|iit|nit|bits|iiit|university|institute|college|rgukt|vit|srm)\b/i;
+    const yearLineRx = /^((?:19|20)\d{2})$/;
+    allLines.forEach((line, idx) => {
+      if (yearLineRx.test(line.trim())) {
+        const yr = parseInt(line.trim());
+        // Check if any of the 4 preceding lines contain a degree/uni keyword
+        const prevLines = allLines.slice(Math.max(0, idx-4), idx).join(" ");
+        if (degKwRx.test(prevLines)) eduYears.push(yr);
+      }
+    });
+
+    const gradYear = eduYears.length > 0 ? Math.max(...eduYears.filter(y=>y>=1990&&y<=curYear+6)) : null;
+    const isCurrentStudent = gradYear !== null && gradYear > curYear;
+
+    // ── Work periods only (exclude education) ────────────────────────────────
+    const periods = workRanges.filter((r,i,a) => !a.slice(0,i).some(p=>p.start===r.start&&p.end===r.end));
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 1: Pre-graduation full-time employment
+    // Skip entirely for current students (they legitimately intern while studying)
+    // Only flag if someone who already GRADUATED claims jobs from before their degree
+    // ─────────────────────────────────────────────────────────────────────────
+    if (gradYear && !isCurrentStudent && periods.length > 0) {
+      const suspicious = periods.filter(p =>
+        p.start < gradYear - 3 &&          // started 3+ years before graduation
+        p.end   > gradYear     &&          // continued after graduation (long full-time claim)
+        (p.end - p.start) >= 3             // lasted 3+ years (not a short internship)
+      );
+      if (suspicious.length > 0)
+        flags.push({ type:"pre_graduation_employment", severity:"high",
+          detail:`Claims full-time employment (${suspicious.map(p=>p.raw).join(", ")}) starting ${gradYear - suspicious[0].start}+ years before graduation (${gradYear}). This timeline is mathematically impossible for a full-time role.` });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 2: Career span vs graduation mismatch
+    // Only for people who have already graduated
+    // ─────────────────────────────────────────────────────────────────────────
+    if (gradYear && !isCurrentStudent && periods.length > 0) {
+      const earliest  = Math.min(...periods.map(p => p.start));
+      const impliedExp = curYear - earliest;
+      const maxPossible = curYear - gradYear;
+      if (impliedExp > maxPossible + 3 && impliedExp > 6)
+        flags.push({ type:"career_span_mismatch", severity:"high",
+          detail:`Resume implies ${impliedExp} years of experience (earliest job: ${earliest}) but only ${maxPossible} years have passed since graduation (${gradYear}). Job start dates appear backdated.` });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 3: Overlapping full-time employment (work periods only, >= 2 yr overlap)
+    // ─────────────────────────────────────────────────────────────────────────
+    if (periods.length >= 2) {
+      const overlapPairs = [];
+      for (let i=0; i<periods.length; i++)
+        for (let j=i+1; j<periods.length; j++) {
+          const ov = Math.min(periods[i].end, periods[j].end) - Math.max(periods[i].start, periods[j].start);
+          if (ov >= 2)  // only flag if overlap is 2+ years (not just adjacent months)
+            overlapPairs.push({ a:`${periods[i].start}–${periods[i].end}`, b:`${periods[j].start}–${periods[j].end}`, years:ov });
+        }
+      if (overlapPairs.length > 0) {
+        const worst = overlapPairs.sort((a,b)=>b.years-a.years)[0];
+        flags.push({ type:"date_overlap", severity: overlapPairs.length>=2?"high":"medium",
+          detail:`${overlapPairs.length} overlapping work period(s). Longest: ${worst.a} and ${worst.b} (${worst.years}-year overlap). Holding two simultaneous full-time roles is a strong fraud signal.` });
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 4: Total tenure exceeds career span (graduated users only)
+    // ─────────────────────────────────────────────────────────────────────────
+    if (gradYear && !isCurrentStudent && periods.length >= 2) {
+      const total  = periods.reduce((s,p) => s + (p.end - p.start), 0);
+      const career = curYear - gradYear;
+      if (career > 0 && total > career * 1.4 && total > career + 4)
+        flags.push({ type:"total_tenure_exceeds_career", severity:"high",
+          detail:`Sum of all job tenures (${total} yrs) exceeds total career span since graduation (${career} yrs since ${gradYear}). Requires overlapping roles or backdated start dates.` });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 5: Copy-pasted job descriptions (passive language, 4+ phrases)
+    // ─────────────────────────────────────────────────────────────────────────
+    const jdPhrases = ["responsible for","worked on various","assisted in","part of the team",
+      "helped the team","involved in","exposure to","familiar with","participated in","contributed to the team"];
+    const hits = jdPhrases.filter(p => norm.includes(p));
+    if (hits.length >= 4)
+      flags.push({ type:"passive_jd_language", severity:"medium",
+        detail:`${hits.length} passive/vague phrases: "${hits.slice(0,3).join('", "')}". Genuine experience uses first-person ownership language (built, designed, led). This pattern indicates copy-pasted JD text.` });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 6: Identical bullet points across different jobs
+    // ─────────────────────────────────────────────────────────────────────────
+    const lines   = text.split("\n").map(l=>l.trim()).filter(l=>l.length>0);
+    const bullets = lines
+      .filter(l => /^[-•*]\s/.test(l) || /^\d+\.\s/.test(l))
+      .map(l => l.replace(/^[-•*\d.]\s*/,"").toLowerCase().trim())
+      .filter(l => l.length > 25);
+    const bMap = new Map();
+    bullets.forEach(b => bMap.set(b, (bMap.get(b)||0)+1));
+    const dupes = [...bMap.entries()].filter(([,c])=>c>1);
+    if (dupes.length >= 2)
+      flags.push({ type:"recycled_bullet_points", severity:"medium",
+        detail:`${dupes.length} identical bullet points appear under multiple companies. This strongly indicates copy-pasting the same description under different employers.` });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 7: Implausible user/revenue scale for role level
+    // ─────────────────────────────────────────────────────────────────────────
+    const bigNums = (text.match(/\b(\d[\d,]*)\s*(million|billion)\b/gi)||[]);
+    const bigVals = bigNums.map(n=>{const v=parseFloat(n.replace(/,/g,""));return /billion/i.test(n)?v*1000:v;}).filter(v=>!isNaN(v));
+    if (bigVals.some(v=>v>=200))
+      flags.push({ type:"implausible_scale", severity:"medium",
+        detail:`Claims impact at ${bigNums.slice(0,2).join(", ")} scale. This is rare even at top-tier companies — verify the actual project scope and the candidate's specific contribution.` });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 8: Multiple perfect 100% metrics (statistically impossible)
+    // ─────────────────────────────────────────────────────────────────────────
+    const perfect = (text.match(/\b100\s*%\b|\bdoubled\b|\btripled\b|\b10x\b/gi)||[]);
+    if (perfect.length >= 3)
+      flags.push({ type:"fabricated_metrics", severity:"medium",
+        detail:`"100%" or extreme multipliers (doubled/tripled/10x) appear ${perfect.length} times. Genuine achievements rarely produce multiple perfect round numbers across different projects.` });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CHECK 9: Two full degrees completed within 1 year of each other
+    // ─────────────────────────────────────────────────────────────────────────
+    const degYearsArr = [];
+    const dgRx = /\b(?:b\.?tech|b\.?e\.?|m\.?tech|mba|m\.?sc|phd|bachelor|master)\b[^.\n]{0,100}?\b((?:19|20)\d{2})\b/gi;
+    while ((m=dgRx.exec(text))!==null) degYearsArr.push(parseInt(m[1]));
+    if (degYearsArr.length >= 2) {
+      const sorted = [...new Set(degYearsArr)].sort((a,b)=>a-b);
+      for (let i=1;i<sorted.length;i++)
+        if (sorted[i]-sorted[i-1] <= 1)
+          flags.push({ type:"degree_timeline_anomaly", severity:"medium",
+            detail:`Two degrees completed within ${sorted[i]-sorted[i-1]===0?"the same year":`${sorted[i]-sorted[i-1]} year`} (${sorted[i-1]} and ${sorted[i]}). Full-time degree programs take 3–4 years minimum.` });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SCORE — high=35pts, medium=18pts, low=8pts, cap at 100
+    // ─────────────────────────────────────────────────────────────────────────
+    const fraudScore = Math.min(
+      flags.reduce((acc,f) => acc+(f.severity==="high"?35:f.severity==="medium"?18:8), 0),
+      100
+    );
+    return {
+      isFraudSuspected: fraudScore >= 35,   // raised threshold — reduce false positives
+      fraudScore,
+      flags,
+      analysis: fraudScore>=60
+        ? "HIGH RISK: Multiple strong fraud indicators. Do not proceed without manual verification of employment history."
+        : fraudScore>=35
+        ? "MODERATE RISK: Suspicious patterns found. Cross-check dates, LinkedIn, and references before shortlisting."
+        : "LOW RISK: No major anomalies detected. Resume appears authentic.",
+    };
+  };
   const analyze = async () => {
     if (!resume) return showToast("Please upload a resume first","error");
     if (!jd.trim()) return showToast("Please enter a job description","error");
@@ -405,8 +599,29 @@ export default function UserDashboard() {
         foundSkills:     aiFound,
         missingSkills:   localMissing,
         recommendations: Array.isArray(r.recommendations) ? r.recommendations : [],
-        fraud:           r.fraud || { isFraudSuspected:false, fraudScore:0, flags:[], analysis:"" },
+        fraud:           detectFraudClientSide(resumeText),
       });
+
+      // If fraud detected client-side, escalate to backend so admin is alerted
+      const fraudResult = detectFraudClientSide(resumeText);
+      if (fraudResult.isFraudSuspected && fraudResult.fraudScore >= 35) {
+        try {
+          await resumeAPI.analyze({
+            resumeId: resume._id,
+            jobDescription: jd,
+            jobTitle,
+            geminiResult: null,
+            fraudOverride: {
+              isFraudSuspected: true,
+              fraudScore:       fraudResult.fraudScore,
+              analysis:         fraudResult.analysis,
+              flags:            fraudResult.flags,
+              summary:          fraudResult.flags.map((f,i)=>`${i+1}. [${f.severity.toUpperCase()}] ${f.detail}`).join("\n"),
+            }
+          });
+        } catch(e) { console.warn("Fraud escalation failed:", e.message); }
+      }
+
       showToast("Analysis complete!");
     } catch (err) {
       showToast("Analysis failed: "+(err.response?.data?.message||err.message),"error");
@@ -668,7 +883,6 @@ export default function UserDashboard() {
     { id:"jobrec",    icon:"💼", label:"Job Matches"       },
     { id:"video",     icon:"🎥", label:"Video Analysis"    },
     { id:"cover",     icon:"✉️", label:"Cover Letter"      },
-    { id:"interview", icon:"📅", label:"My Interviews"     },
     { id:"apply",     icon:"📤", label:"Apply to HR"       },
     { id:"history",   icon:"📁", label:"My Resumes"        },
     { id:"profile",   icon:"👤", label:"Profile"           },
@@ -831,19 +1045,36 @@ export default function UserDashboard() {
                 )}
 
                 <div className="card">
-                  <div className="card-hd"><span className="card-title">Fraud Detection</span></div>
+                  <div className="card-hd">
+                    <span className="card-title">🛡️ Resume Integrity Check</span>
+                  </div>
                   {result ? (
-                    <div style={{background:result.fraud.isFraudSuspected?"var(--red-lt)":"var(--green-lt)",border:`1px solid ${result.fraud.isFraudSuspected?"var(--red-mid)":"var(--green-mid)"}`,borderRadius:"var(--r10)",padding:14}}>
-                      <div style={{fontSize:22,marginBottom:8}}>{result.fraud.isFraudSuspected?"⚠️":"✅"}</div>
-                      <div style={{fontWeight:700,fontSize:13,color:result.fraud.isFraudSuspected?"var(--red)":"var(--green)"}}>
-                        {result.fraud.isFraudSuspected?"Suspicious Patterns Found":"Resume Appears Authentic"}
+                    result.fraud?.isFraudSuspected ? (
+                      <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:"var(--r10)",padding:"16px"}}>
+                        <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                          <span style={{fontSize:22}}>⚠️</span>
+                          <div>
+                            <div style={{fontWeight:700,fontSize:14,color:"#92400E",marginBottom:4}}>
+                              Integrity Check Flagged
+                            </div>
+                            <div style={{fontSize:13,color:"#78350F",lineHeight:1.6}}>
+                              Our system detected some inconsistencies in your resume. HR will review your profile carefully. Ensure all details — dates, roles, and achievements — are accurate and verifiable.
+                            </div>
+                            <div style={{marginTop:10,fontSize:12.5,color:"#92400E",fontWeight:600}}>
+                              💡 Tip: Make sure your employment dates, education years, and experience claims are accurate before applying.
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div style={{fontSize:12,marginTop:5,color:"var(--muted)"}}>Fraud score: {result.fraud.fraudScore}/100</div>
-                      <div style={{fontSize:12,marginTop:6,fontStyle:"italic",color:"var(--muted)"}}>{result.fraud.analysis}</div>
-                      {result.fraud.flags.map((f,i)=>(
-                        <div key={i} style={{fontSize:12,marginTop:6,padding:"6px 10px",background:"rgba(0,0,0,.06)",borderRadius:"var(--r6)"}}>{f.description}</div>
-                      ))}
-                    </div>
+                    ) : (
+                      <div style={{background:"#ECFDF5",border:"1px solid #6EE7B7",borderRadius:"var(--r10)",padding:"16px",display:"flex",gap:12,alignItems:"center"}}>
+                        <span style={{fontSize:22}}>✅</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:14,color:"#065F46",marginBottom:4}}>Integrity Check Passed</div>
+                          <div style={{fontSize:13,color:"#047857",lineHeight:1.6}}>No inconsistencies detected. Your resume appears authentic and ready for HR review.</div>
+                        </div>
+                      </div>
+                    )
                   ) : (
                     <div style={{textAlign:"center",padding:"20px 0",color:"var(--muted)",fontSize:13}}>🛡️ Run analysis to check</div>
                   )}
@@ -1536,162 +1767,25 @@ export default function UserDashboard() {
           })()}
 
           {/* MY INTERVIEWS TAB */}
-          {tab==="interview" && (
-            <div style={{display:"flex",flexDirection:"column",gap:16}}>
-              {myInterviews.length === 0 ? (
-                <div className="card" style={{textAlign:"center",padding:"60px 24px"}}>
-                  <div style={{fontSize:48,marginBottom:16}}>📅</div>
-                  <h3 style={{fontSize:17,marginBottom:8}}>No interviews scheduled yet</h3>
-                  <p style={{color:"var(--muted)",fontSize:14,marginBottom:20,lineHeight:1.6}}>
-                    Once you apply and HR shortlists you, your interview details will appear here.<br/>
-                    You'll also receive an email notification.
-                  </p>
-                  <button className="btn btn-primary" onClick={()=>setTab("apply")}>📤 Apply to HR →</button>
-                </div>
-              ) : (
-                <>
-                  {/* Status banner for hired/rejected */}
-                  {myInterviews.some(i=>i.outcome==="Hired") && (
-                    <div style={{background:"linear-gradient(135deg,#059669,#065F46)",borderRadius:"var(--r20)",padding:"28px 32px",color:"#fff",textAlign:"center"}}>
-                      <div style={{fontSize:40,marginBottom:10}}>🎊</div>
-                      <div style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,marginBottom:6}}>Congratulations! You're Hired!</div>
-                      <div style={{fontSize:14,opacity:.9}}>You've received an offer letter on your registered email. Welcome aboard!</div>
-                    </div>
-                  )}
-
-                  {/* Pipeline steps */}
-                  <div className="card">
-                    <div className="card-hd"><span className="card-title">📋 Your Interview Journey</span></div>
-                    <div style={{display:"flex",gap:0,overflowX:"auto",paddingBottom:4}}>
-                      {["Applied","Shortlisted","Interview Scheduled","Interview Done","Decision"].map((step,i)=>{
-                        const hired    = myInterviews.some(iv=>iv.outcome==="Hired");
-                        const rejected = myInterviews.some(iv=>iv.outcome==="Rejected");
-                        const scheduled = myInterviews.some(iv=>iv.status==="Scheduled"||iv.status==="Rescheduled");
-                        const completed = myInterviews.some(iv=>iv.status==="Completed");
-                        const active =
-                          i===0 ? true :
-                          i===1 ? (user?.status==="Shortlisted"||user?.status==="Active"||scheduled||completed||hired||rejected) :
-                          i===2 ? (scheduled||completed||hired||rejected) :
-                          i===3 ? (completed||hired||rejected) :
-                          hired||rejected;
-                        return (
-                          <div key={step} style={{flex:1,minWidth:90,textAlign:"center",position:"relative"}}>
-                            {i>0 && <div style={{position:"absolute",top:18,left:0,right:"50%",height:2,background:active?"#059669":"var(--border)"}}></div>}
-                            {i<4 && <div style={{position:"absolute",top:18,left:"50%",right:0,height:2,background:active&&i<4?(
-                              i===0?(user?.status==="Shortlisted"||scheduled||completed||hired||rejected):
-                              i===1?(scheduled||completed||hired||rejected):
-                              i===2?(completed||hired||rejected):
-                              hired||rejected
-                            )?"#059669":"var(--border)":"var(--border)"}}></div>}
-                            <div style={{width:36,height:36,borderRadius:"50%",background:active?(hired&&i===4?"#059669":rejected&&i===4?"#DC2626":"#059669"):"var(--bg)",border:`2px solid ${active?"#059669":"var(--border)"}`,margin:"0 auto 8px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,position:"relative",zIndex:1}}>
-                              {active?(hired&&i===4?"🎊":rejected&&i===4?"❌":"✓"):(i+1)}
-                            </div>
-                            <div style={{fontSize:11,fontWeight:600,color:active?"var(--text)":"var(--muted)",lineHeight:1.3}}>{step}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Interview cards */}
-                  {myInterviews.map(iv=>{
-                    const isPast    = new Date(iv.date) < new Date();
-                    const isHired   = iv.outcome==="Hired";
-                    const isRejected= iv.outcome==="Rejected";
-                    const cardBorder= isHired?"#6EE7B7":isRejected?"#FECACA":iv.status==="Scheduled"?"#BFCFFD":"var(--border)";
-                    const cardBg    = isHired?"#ECFDF5":isRejected?"#FEF2F2":iv.status==="Scheduled"?"#EFF4FF":"var(--card)";
-                    return (
-                      <div key={iv._id} className="card" style={{border:`1.5px solid ${cardBorder}`,background:cardBg,padding:0,overflow:"hidden"}}>
-                        <div style={{height:4,background:isHired?"#059669":isRejected?"#DC2626":iv.status==="Scheduled"?"#1B5EEA":"#D97706"}}></div>
-                        <div style={{padding:"20px 24px"}}>
-                          {/* Header */}
-                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:12,marginBottom:16}}>
-                            <div>
-                              <div style={{fontFamily:"Fraunces,serif",fontSize:18,fontWeight:700,marginBottom:4}}>{iv.jobTitle}</div>
-                              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                                <span style={{background:"#F5F3FF",color:"#7C3AED",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>{iv.round}</span>
-                                <span style={{background:iv.status==="Scheduled"?"#EFF4FF":iv.status==="Completed"?"#ECFDF5":"#FFFBEB",color:iv.status==="Scheduled"?"#1B5EEA":iv.status==="Completed"?"#059669":"#D97706",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>{iv.status}</span>
-                                {iv.outcome!=="Pending"&&<span style={{background:isHired?"#ECFDF5":isRejected?"#FEF2F2":"#F5F3FF",color:isHired?"#059669":isRejected?"#DC2626":"#7C3AED",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>{isHired?"🎊 Hired":isRejected?"❌ Rejected":"🔁 Next Round"}</span>}
-                              </div>
-                            </div>
-                            {/* Countdown */}
-                            {iv.status==="Scheduled" && !isPast && (
-                              <div style={{background:"#1B5EEA",borderRadius:"var(--r12)",padding:"10px 16px",textAlign:"center",color:"#fff"}}>
-                                <div style={{fontSize:11,opacity:.8,fontWeight:600,marginBottom:2}}>INTERVIEW IN</div>
-                                <div style={{fontSize:18,fontWeight:800}}>
-                                  {Math.ceil((new Date(iv.date)-new Date())/(1000*60*60*24))} days
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Details grid */}
-                          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:iv.notes||iv.offerDetails?16:0}}>
-                            {[
-                              ["🗓️","Date & Time", new Date(iv.date).toLocaleString("en-IN",{dateStyle:"full",timeStyle:"short"})],
-                              ["💻","Mode", iv.mode],
-                              ...(iv.location?[["📍","Location", iv.location]]:[]),
-                              ["👤","Scheduled by", iv.scheduledBy?.name||"HR Team"],
-                            ].map(([icon,label,val])=>(
-                              <div key={label} style={{background:"rgba(255,255,255,0.7)",borderRadius:"var(--r8)",padding:"10px 14px"}}>
-                                <div style={{fontSize:11,color:"var(--muted)",fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",marginBottom:4}}>{icon} {label}</div>
-                                <div style={{fontSize:13.5,fontWeight:600,color:"var(--text)"}}>{val}</div>
-                              </div>
-                            ))}
-                          </div>
-
-                          {/* Offer details (when hired) */}
-                          {isHired && iv.offerDetails && (
-                            <div style={{background:"#ECFDF5",border:"1px solid #6EE7B7",borderRadius:"var(--r12)",padding:"14px 18px",marginBottom:12}}>
-                              <div style={{fontSize:11,fontWeight:700,color:"#059669",textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>💼 Your Offer Details</div>
-                              <div style={{fontSize:14,color:"#065F46",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{iv.offerDetails}</div>
-                            </div>
-                          )}
-
-                          {/* Notes */}
-                          {iv.notes && (
-                            <div style={{background:"rgba(255,255,255,0.8)",border:"1px solid var(--border)",borderRadius:"var(--r8)",padding:"12px 16px",marginBottom:12}}>
-                              <div style={{fontSize:11,fontWeight:700,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".5px",marginBottom:6}}>📝 Note from HR</div>
-                              <div style={{fontSize:13.5,color:"var(--text)",lineHeight:1.6}}>{iv.notes}</div>
-                            </div>
-                          )}
-
-                          {/* Prep tips for scheduled */}
-                          {iv.status==="Scheduled" && iv.outcome==="Pending" && (
-                            <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:"var(--r12)",padding:"14px 18px",marginTop:4}}>
-                              <div style={{fontSize:12,fontWeight:700,color:"#92400E",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>⭐ Interview Prep Checklist</div>
-                              <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                                {[
-                                  "Research the company's products and recent news",
-                                  "Prepare 3 examples of past achievements using the STAR method",
-                                  iv.mode==="Video Call"?"Test your camera, mic and internet 15 mins before":"Reach the venue at least 10 minutes early",
-                                  "Review your resume thoroughly — expect questions on every line",
-                                  "Prepare 2–3 thoughtful questions to ask the interviewer",
-                                ].map((tip,i)=>(
-                                  <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",fontSize:13,color:"#374151"}}>
-                                    <span style={{color:"#D97706",fontWeight:700,flexShrink:0}}>☐</span>{tip}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-            </div>
-          )}
 
           {tab==="apply" && (() => {
-            // Derive live pipeline stage from user status + interview data
-            const status = user?.status || "New";
-            const hasInterview  = myInterviews.length > 0;
-            const nextInterview = myInterviews.find(i=>i.status==="Scheduled"&&i.outcome==="Pending");
-            const isHired       = myInterviews.some(i=>i.outcome==="Hired") || status==="Active";
-            const isRejected    = myInterviews.some(i=>i.outcome==="Rejected") || status==="Rejected";
-            const isShortlisted = status==="Shortlisted" || hasInterview;
+            // Derive status from both the user object AND local applied state
+            const status        = user?.status || "New";
+            const hasApplied    = applied || user?.appliedToHR || false;
+            const isShortlisted = status === "Shortlisted";
+            const isRejected    = status === "Rejected" && hasApplied;
+            const isHired       = status === "Active" && isShortlisted === false && hasApplied && user?.totalAnalyses > 0;
+            // Clean label for the badge
+            const statusLabel   = isShortlisted ? "Shortlisted"
+                                : isRejected    ? "Not Selected"
+                                : isHired       ? "Hired"
+                                : hasApplied    ? "Under Review"
+                                :                 "Not Applied";
+            const statusTag     = isShortlisted ? "tag-green"
+                                : isRejected    ? "tag-red"
+                                : isHired       ? "tag-green"
+                                : hasApplied    ? "tag-blue"
+                                :                 "tag-gray";
 
             // ATS score history from all resumes (sorted oldest→newest)
             const scoreHistory = [...resumes]
@@ -1699,49 +1793,33 @@ export default function UserDashboard() {
               .sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt))
               .slice(-6);
 
-            // Stage definitions
+            // 3-stage pipeline
             const stages = [
               {
                 id:"applied", icon:"📤", label:"Applied",
-                done: applied || isShortlisted || hasInterview || isHired || isRejected,
-                active: !applied && !isShortlisted,
-                desc: applied ? "Your profile is visible to HR." : "Submit your application to begin.",
+                done: hasApplied || isShortlisted || isHired || isRejected,
+                active: !hasApplied,
+                desc: hasApplied ? "Your profile is visible to HR." : "Submit your application to begin.",
                 color:"#1B5EEA",
               },
               {
                 id:"review", icon:"🔍", label:"Under Review",
-                done: isShortlisted || hasInterview || isHired || isRejected,
-                active: applied && !isShortlisted && !isHired && !isRejected,
+                done: isShortlisted || isHired || isRejected,
+                active: hasApplied && !isShortlisted && !isHired && !isRejected,
                 desc: isShortlisted ? "HR reviewed your profile." : "HR is reviewing your resume & ATS score.",
                 color:"#D97706",
               },
               {
                 id:"shortlisted", icon:"⭐", label:"Shortlisted",
-                done: isShortlisted || hasInterview || isHired || isRejected,
-                active: isShortlisted && !hasInterview && !isHired && !isRejected,
-                desc: isShortlisted ? "You've been shortlisted!" : "Shortlisted candidates get an interview.",
+                done: isShortlisted || isHired,
+                active: isShortlisted,
+                desc: isShortlisted ? "🎉 You've been shortlisted by HR!" : "Top candidates are shortlisted by HR.",
                 color:"#7C3AED",
-              },
-              {
-                id:"interview", icon:"📅", label:"Interview",
-                done: hasInterview || isHired || isRejected,
-                active: isShortlisted && !hasInterview,
-                desc: nextInterview
-                  ? `${nextInterview.round} on ${new Date(nextInterview.date).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}`
-                  : hasInterview ? "Interview completed." : "Interview will be scheduled.",
-                color:"#0891B2",
-              },
-              {
-                id:"decision", icon: isHired?"🎊":isRejected?"❌":"🏁", label:"Decision",
-                done: isHired || isRejected,
-                active: hasInterview && !isHired && !isRejected,
-                desc: isHired?"Offer letter sent! You're hired!":isRejected?"Application not selected this time.":"Awaiting final decision.",
-                color: isHired?"#059669":isRejected?"#DC2626":"#64748B",
               },
             ];
 
-            // Current active stage index
-            const activeIdx = isHired||isRejected ? 4 : hasInterview ? 3 : isShortlisted ? 2 : applied ? 1 : 0;
+            // Current active stage index (0-2)
+            const activeIdx = isShortlisted ? 2 : hasApplied ? 1 : 0;
 
             return (
               <div style={{display:"flex",flexDirection:"column",gap:16}}>
@@ -1752,19 +1830,70 @@ export default function UserDashboard() {
                     <div style={{fontSize:40,marginBottom:10}}>🎊</div>
                     <div style={{fontFamily:"Fraunces,serif",fontSize:22,fontWeight:700,marginBottom:6}}>Congratulations — You're Hired!</div>
                     <div style={{fontSize:14,opacity:.85,lineHeight:1.6}}>An offer letter has been sent to your email. Check your My Interviews tab for full details.</div>
-                    <button className="btn" style={{marginTop:16,background:"rgba(255,255,255,.2)",color:"#fff",border:"1px solid rgba(255,255,255,.4)"}} onClick={()=>setTab("interview")}>📅 View Offer Details →</button>
+                    <button className="btn" style={{marginTop:16,background:"rgba(255,255,255,.2)",color:"#fff",border:"1px solid rgba(255,255,255,.4)"}} onClick={()=>setTab("apply")}>📊 View Application Status →</button>
                   </div>
                 )}
 
-                {/* ── Rejected Banner ── */}
+                {/* ── Rejected Banner — with Re-Apply option ── */}
                 {isRejected && !isHired && (
-                  <div style={{background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"var(--r20)",padding:"24px 28px",textAlign:"center"}}>
-                    <div style={{fontSize:36,marginBottom:8}}>💪</div>
-                    <div style={{fontWeight:700,fontSize:16,marginBottom:6}}>Keep Going!</div>
-                    <div style={{fontSize:13.5,color:"var(--muted)",lineHeight:1.6,marginBottom:14}}>This application wasn't selected, but your profile remains active. Improve your ATS score and apply again.</div>
+                  <div style={{background:"var(--bg)",border:"1px solid var(--border)",borderRadius:"var(--r20)",padding:"28px 32px",textAlign:"center"}}>
+                    <div style={{fontSize:40,marginBottom:10}}>💪</div>
+                    <div style={{fontWeight:700,fontSize:18,marginBottom:8}}>This Round Didn't Work Out</div>
+                    <div style={{fontSize:14,color:"var(--muted)",lineHeight:1.7,marginBottom:20,maxWidth:440,margin:"0 auto 20px"}}>
+                      Your application wasn't selected this time. To apply again, upload a fresh resume with improvements and run a new ATS analysis first.
+                    </div>
+
+                    {/* Step-by-step re-apply checklist */}
+                    <div style={{background:"#EFF4FF",border:"1px solid #BFCFFD",borderRadius:"var(--r12)",padding:"16px 20px",marginBottom:20,textAlign:"left",maxWidth:420,margin:"0 auto 20px"}}>
+                      <div style={{fontWeight:700,fontSize:13.5,marginBottom:12,color:"#1347C4"}}>Complete these steps before re-applying:</div>
+                      {[
+                        ["1","📄","Upload a new or updated resume",           ()=>setTab("ats"),    !!resume && result],
+                        ["2","📊","Run ATS analysis on your new resume",       ()=>setTab("ats"),    !!result],
+                        ["3","🎯","Review and close your skill gaps",          ()=>setTab("skills"), (result?.missingSkills||[]).length===0],
+                        ["4","🔄","Click Apply Again below",                   null,                 false],
+                      ].map(([step,icon,label,action,done])=>(
+                        <div key={step} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:"1px solid #BFCFFD"}}>
+                          <div style={{width:24,height:24,borderRadius:"50%",background:done?"#1B5EEA":"var(--bg)",border:"1.5px solid #BFCFFD",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:done?"#fff":"var(--muted)",flexShrink:0}}>{done?"✓":step}</div>
+                          <span style={{flex:1,fontSize:13,color:done?"var(--text)":"var(--muted)"}}>{icon} {label}</span>
+                          {action && !done && <button className="btn btn-sm btn-outline" style={{fontSize:11,padding:"3px 10px"}} onClick={action}>Go →</button>}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Start fresh button — clears resume and result */}
+                    {!result && (
+                      <div style={{marginBottom:16}}>
+                        <button className="btn btn-outline" style={{width:"100%",maxWidth:400}}
+                          onClick={()=>{ setResume(null); setResult(null); setJd(""); setJobTitle(""); setTab("ats"); showToast("Upload a new resume to get started"); }}>
+                          📄 Start Fresh — Upload New Resume
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Apply Again — only enabled after fresh ATS run */}
                     <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-                      <button className="btn btn-primary" onClick={()=>setTab("ats")}>📊 Improve ATS Score</button>
-                      <button className="btn btn-outline" onClick={()=>setTab("skills")}>🎯 Close Skill Gaps</button>
+                      {!result ? (
+                        <div style={{fontSize:13,color:"var(--muted)",padding:"10px 0"}}>
+                          ⬆️ Complete the steps above before applying
+                        </div>
+                      ) : (
+                        <button
+                          className="btn btn-primary"
+                          style={{padding:"12px 32px",fontSize:15}}
+                          disabled={applying}
+                          onClick={async()=>{
+                            setApplying(true);
+                            try {
+                              await userAPI.applyToHR();
+                              showToast("🎉 Re-application submitted! HR can review your updated profile.");
+                              setTimeout(()=>window.location.reload(), 1500);
+                            } catch(err) { showToast("Failed: "+(err.response?.data?.message||err.message),"error"); }
+                            finally { setApplying(false); }
+                          }}
+                        >
+                          {applying?"Submitting...":"🔄 Apply Again with New Resume"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1773,8 +1902,8 @@ export default function UserDashboard() {
                 <div className="card">
                   <div className="card-hd" style={{marginBottom:24}}>
                     <span className="card-title">📋 Application Pipeline</span>
-                    <span className={`tag ${isHired?"tag-green":isRejected?"tag-red":applied?"tag-blue":"tag-gray"}`}>
-                      {isHired?"Hired":isRejected?"Not Selected":applied?"In Progress":"Not Applied"}
+                    <span className={`tag ${statusTag}`}>
+                      {statusLabel}
                     </span>
                   </div>
 
@@ -1785,19 +1914,19 @@ export default function UserDashboard() {
                         {/* connector left */}
                         {i>0 && <div style={{position:"absolute",top:20,left:0,right:"50%",height:3,background:s.done?"#059669":"var(--border)",transition:"background .3s"}}></div>}
                         {/* connector right */}
-                        {i<4 && <div style={{position:"absolute",top:20,left:"50%",right:0,height:3,background:stages[i+1]?.done?"#059669":"var(--border)",transition:"background .3s"}}></div>}
+                        {i<2 && <div style={{position:"absolute",top:20,left:"50%",right:0,height:3,background:stages[i+1]?.done?"#059669":"var(--border)",transition:"background .3s"}}></div>}
                         {/* circle */}
                         <div style={{
                           width:40,height:40,borderRadius:"50%",margin:"0 auto 10px",
                           display:"flex",alignItems:"center",justifyContent:"center",
                           fontSize:s.done?16:14,position:"relative",zIndex:1,
-                          background:s.done?(isRejected&&i===4?"#DC2626":"#059669"):s.active?s.color:"var(--bg)",
-                          border:`3px solid ${s.done?(isRejected&&i===4?"#DC2626":"#059669"):s.active?s.color:"var(--border)"}`,
+                          background:s.done?"#059669":s.active?s.color:"var(--bg)",
+                          border:`3px solid ${s.done?"#059669":s.active?s.color:"var(--border)"}`,
                           color:s.done||s.active?"#fff":"var(--muted)",fontWeight:700,
                           boxShadow:s.active?`0 0 0 4px ${s.color}22`:"none",
                           transition:"all .3s",
                         }}>
-                          {s.done ? (i===4&&isRejected?"✕":"✓") : s.active ? s.icon : i+1}
+                          {s.done ? "✓" : s.active ? s.icon : i+1}
                         </div>
                         <div style={{fontSize:11.5,fontWeight:700,color:s.done?"#059669":s.active?s.color:"var(--muted)",marginBottom:3,lineHeight:1.2}}>{s.label}</div>
                         <div style={{fontSize:10.5,color:"var(--muted)",lineHeight:1.4,padding:"0 4px"}}>{s.desc}</div>
@@ -1806,7 +1935,7 @@ export default function UserDashboard() {
                   </div>
 
                   {/* Current stage callout */}
-                  {!isHired && !isRejected && (
+                  {!isHired && !isRejected && !isShortlisted && hasApplied && (
                     <div style={{background:`${stages[activeIdx]?.color}12`,border:`1px solid ${stages[activeIdx]?.color}33`,borderRadius:"var(--r12)",padding:"14px 18px",display:"flex",gap:12,alignItems:"center"}}>
                       <span style={{fontSize:24}}>{stages[activeIdx]?.icon}</span>
                       <div>
@@ -1911,61 +2040,21 @@ export default function UserDashboard() {
                   )}
                 </div>
 
-                {/* ── Interview Tracker ── */}
-                {myInterviews.length > 0 && (
-                  <div className="card">
-                    <div className="card-hd">
-                      <span className="card-title">📅 Interview Tracker</span>
-                      <span className="tag tag-green">{myInterviews.length} scheduled</span>
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      {myInterviews.slice(0,3).map(iv=>{
-                        const isPast = new Date(iv.date)<new Date();
-                        const outcomeColor = iv.outcome==="Hired"?"#059669":iv.outcome==="Rejected"?"#DC2626":iv.outcome==="Next Round"?"#7C3AED":"#1B5EEA";
-                        return (
-                          <div key={iv._id} style={{display:"flex",gap:14,padding:"12px 14px",background:"var(--bg)",borderRadius:"var(--r12)",border:"1px solid var(--border)",alignItems:"center",flexWrap:"wrap"}}>
-                            <div style={{width:40,height:40,borderRadius:"var(--r8)",background:isPast?"var(--border)":"#EFF4FF",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
-                              {iv.outcome==="Hired"?"🎊":iv.outcome==="Rejected"?"❌":isPast?"✅":"📅"}
-                            </div>
-                            <div style={{flex:1,minWidth:120}}>
-                              <div style={{fontWeight:700,fontSize:13.5}}>{iv.round} — {iv.jobTitle}</div>
-                              <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>
-                                {new Date(iv.date).toLocaleString("en-IN",{dateStyle:"medium",timeStyle:"short"})} · {iv.mode}
-                              </div>
-                            </div>
-                            <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
-                              <span style={{background:`${outcomeColor}15`,color:outcomeColor,borderRadius:20,padding:"3px 10px",fontSize:11.5,fontWeight:700}}>
-                                {iv.outcome==="Pending"?(isPast?"Completed":"Upcoming"):iv.outcome}
-                              </span>
-                              {!isPast && iv.status==="Scheduled" && (
-                                <span style={{fontSize:11,color:"var(--muted)"}}>
-                                  in {Math.ceil((new Date(iv.date)-new Date())/(1000*60*60*24))} days
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <button className="btn btn-outline" style={{width:"100%",marginTop:12}} onClick={()=>setTab("interview")}>
-                      📅 View Full Interview Details →
-                    </button>
-                  </div>
-                )}
-
                 {/* ── Apply / Reapply Card ── */}
                 {!isHired && (
                   <div className="card" style={{textAlign:"center",padding:"32px 24px"}}>
-                    <div style={{fontSize:48,marginBottom:12}}>{applied?"✅":"📤"}</div>
+                    <div style={{fontSize:48,marginBottom:12}}>{hasApplied?"✅":"📤"}</div>
                     <h3 style={{fontSize:18,fontWeight:700,marginBottom:8}}>
-                      {applied?"Application Submitted":"Apply to HR Dashboard"}
+                      {isShortlisted?"🎉 You've Been Shortlisted!":hasApplied?"Application Submitted":"Apply to HR Dashboard"}
                     </h3>
                     <p style={{color:"var(--muted)",fontSize:13.5,marginBottom:20,lineHeight:1.6,maxWidth:440,margin:"0 auto 20px"}}>
-                      {applied
+                      {isShortlisted
+                        ? "HR has reviewed your profile and shortlisted you. They will reach out to you shortly."
+                        : hasApplied
                         ? "Your profile is visible to HR. Keep improving your ATS score to increase shortlisting chances."
                         : "Submit your application to make your profile visible to HR administrators."}
                     </p>
-                    {!applied && (
+                    {!hasApplied && (
                       <div style={{background:"var(--bg)",borderRadius:"var(--r12)",padding:16,marginBottom:20,textAlign:"left",maxWidth:380,margin:"0 auto 20px"}}>
                         <div style={{fontWeight:600,fontSize:13.5,marginBottom:10}}>Before applying, ensure:</div>
                         {[
@@ -1980,7 +2069,7 @@ export default function UserDashboard() {
                         ))}
                       </div>
                     )}
-                    {applied ? (
+                    {hasApplied ? (
                       <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
                         <button className="btn btn-outline" onClick={()=>setTab("ats")}>📊 Improve ATS Score</button>
                         <button className="btn btn-outline" onClick={()=>setTab("jobrec")}>💼 Browse Job Matches</button>
