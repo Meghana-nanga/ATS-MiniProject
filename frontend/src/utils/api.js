@@ -45,19 +45,16 @@ export const resumeAPI = {
     api.post("/resume/upload", formData, {
       headers: { "Content-Type": "multipart/form-data" },
     }),
-
   analyze:      (data) => api.post("/resume/analyze", data),
   getMyResumes: ()     => api.get("/resume/my"),
   getOne:       (id)   => api.get(`/resume/${id}`),
   getText:      (id)   => api.get(`/resume/${id}/text`),
   delete:       (id)   => api.delete(`/resume/${id}`),
   coverLetter:  (data) => api.post("/resume/cover-letter", data),
-
   analyzeVideo: (formData) =>
     api.post("/resume/video-analyze", formData, {
       headers: { "Content-Type": "multipart/form-data" },
     }),
-
   score: (id, data) => api.post(`/resume/${id}/score`, data),
 };
 
@@ -68,12 +65,10 @@ export const jobsAPI = {
   apply:          (id, data) => api.post(`/jobs/${id}/apply`, data),
   withdraw:       (id)       => api.delete(`/jobs/${id}/apply`),
   myApplications: ()         => api.get("/jobs/my-applications"),
-
-  // Admin job management
-  create:        (data)     => api.post("/jobs", data),
-  update:        (id, data) => api.put(`/jobs/${id}`, data),
-  remove:        (id)       => api.delete(`/jobs/${id}`),
-  getApplicants: (id)       => api.get(`/jobs/${id}/applicants`),
+  create:         (data)     => api.post("/jobs", data),
+  update:         (id, data) => api.put(`/jobs/${id}`, data),
+  remove:         (id)       => api.delete(`/jobs/${id}`),
+  getApplicants:  (id)       => api.get(`/jobs/${id}/applicants`),
 };
 
 // ── ADMIN (HR) ───────────────────────────────────────────────
@@ -89,8 +84,6 @@ export const adminAPI = {
   resendEmail:       (id)       => api.post(`/admin/candidates/${id}/resend-email`),
   getAnalytics:      ()         => api.get("/admin/analytics"),
   getRankings:       ()         => api.get("/admin/candidates/rankings"),
-
-  // CSV Export
   exportCSV: () =>
     api.get("/admin/candidates/export", { responseType: "blob" }).then((res) => {
       const url = window.URL.createObjectURL(
@@ -104,23 +97,28 @@ export const adminAPI = {
       link.remove();
       window.URL.revokeObjectURL(url);
     }),
-
-  // HR Alerts (Super Admin decisions)
+  // Alerts: HR sees fraud_flag + superadmin_decision
   getAlerts:     ()   => api.get("/admin/alerts"),
   markAlertRead: (id) => api.patch(`/admin/alerts/${id}/read`),
 };
 
 // ── SUPER ADMIN ───────────────────────────────────────────────
 export const superAdminAPI = {
+  // Alerts: Super Admin sees fraud_flag alerts sent by HR
+  getAlerts:     ()   => api.get("/superadmin/alerts"),
+  markAlertRead: (id) => api.patch(`/superadmin/alerts/${id}/read`),
+
+  // Decision: ban or clear → creates superadmin_decision alert for HR
   decideOnFlag: (userId, data) =>
-    api.post(`/super-admin/decide/${userId}`, data),
+    api.post(`/superadmin/decide/${userId}`, data),
 
-  getAlerts: () => api.get("/super-admin/alerts"), // ✅ ADD
+  // Users & Analytics
+  getUsers:    (params) => api.get("/superadmin/users", { params }),
+  getAnalytics: ()      => api.get("/superadmin/analytics"),
 
-  markAlertRead: (id) =>
-    api.patch(`/super-admin/alerts/${id}/read`), // ✅ ADD
-
-  getUsers: (params) => api.get("/super-admin/users", { params }),
+  // Direct ban / restore
+  banUser:     (id, data) => api.post(`/superadmin/users/${id}/ban`, data),
+  restoreUser: (id, data) => api.post(`/superadmin/users/${id}/restore`, data),
 };
 
 export default api;

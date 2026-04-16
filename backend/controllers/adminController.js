@@ -243,24 +243,52 @@ exports.getAnalytics = async (req, res) => {
   try {
     const User = require("../models/User");
 
-    const totalUsers = await User.countDocuments();
+    const filter = { role: "user" };
+    if (req.user?.role === "admin") {
+      filter.appliedToHR = true;
+    }
+
+    const [
+      totalUsers,
+      shortlisted,
+      flagged,
+      rejected,
+      active,
+      fraudCandidatesList,
+    ] = await Promise.all([
+      User.countDocuments(filter),
+      User.countDocuments({ ...filter, status: "Shortlisted" }),
+      User.countDocuments({ ...filter, isFraudFlagged: true }),
+      User.countDocuments({ ...filter, status: "Rejected" }),
+      User.countDocuments({ ...filter, status: "Active" }),
+      User.find({ ...filter, isFraudFlagged: true })
+        .select("name email status fraudScore fraudReason lastAtsScore createdAt")
+        .sort("-fraudScore")
+        .limit(50)
+        .lean(),
+    ]);
 
     res.json({
       success: true,
       analytics: {
-        totalUsers
-      }
+        totalUsers,
+        shortlisted,
+        flagged,
+        rejected,
+        active,
+      },
+      // fraudCandidates is used by AdminDashboard to build fraud alerts
+      fraudCandidates: fraudCandidatesList,
     });
 
   } catch (error) {
     console.error(error);
     res.status(500).json({
       success: false,
-      message: "Failed to load analytics"
+      message: "Failed to load analytics",
     });
   }
 };
-
 // ─── RANKINGS ────────────────────────────────────────────────────────────────
 exports.getRankings = async (req, res) => {
   try {

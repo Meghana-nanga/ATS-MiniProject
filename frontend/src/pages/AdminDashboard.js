@@ -1,5 +1,3 @@
-
-
 /* eslint-disable */
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
@@ -24,7 +22,6 @@ function StatusTag({s}){
   return <span className={"tag "+(m[s]||"tag-gray")}>{s}</span>;
 }
 
-// Fraud detail modal — HR escalates to Super Admin
 function FraudDetailModal({ candidate, onClose, onFlagSuperAdmin, onFlagBan }) {
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,7 +42,6 @@ function FraudDetailModal({ candidate, onClose, onFlagSuperAdmin, onFlagBan }) {
           <span className="modal-title">⚠️ Fraud Alert — {candidate.name}</span>
           <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
         </div>
-
         <div style={{background:"var(--red-lt)",border:"1px solid var(--red-mid)",borderRadius:"var(--r10)",padding:16,marginBottom:20}}>
           <div style={{fontWeight:700,fontSize:13,color:"var(--red)",marginBottom:8}}>Fraud Detection Report</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
@@ -62,22 +58,19 @@ function FraudDetailModal({ candidate, onClose, onFlagSuperAdmin, onFlagBan }) {
             <div style={{fontSize:13,color:"var(--red)",fontStyle:"italic",lineHeight:1.6}}>{candidate.fraudReason}</div>
           )}
         </div>
-
         <div style={{fontSize:13.5,color:"var(--muted)",lineHeight:1.7,marginBottom:20}}>
           As <strong>HR Admin</strong>, you can:
           <ul style={{marginTop:8,paddingLeft:20,display:"flex",flexDirection:"column",gap:6}}>
-            <li><strong>Flag for Super Admin review</strong> — Super Admin will be notified and can decide to ban or clear this candidate. You will receive their decision and make the final call.</li>
+            <li><strong>Flag for Super Admin review</strong> — Super Admin will be notified and can decide to ban or clear this candidate.</li>
             <li><strong>Remove immediately</strong> — Bans the candidate from the platform right now.</li>
           </ul>
         </div>
-
         <div className="form-group">
           <label className="form-label">Reason / Evidence (will be sent to Super Admin)</label>
           <textarea className="form-textarea" rows={3}
-            placeholder="Describe what makes this resume suspicious — e.g. duplicate content, impossible titles, fabricated credentials..."
+            placeholder="Describe what makes this resume suspicious..."
             value={reason} onChange={e=>setReason(e.target.value)}/>
         </div>
-
         <div style={{display:"flex",gap:10,justifyContent:"flex-end",borderTop:"1px solid var(--border)",paddingTop:16}}>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-outline" style={{color:"var(--amber)",borderColor:"var(--amber)"}}
@@ -93,7 +86,6 @@ function FraudDetailModal({ candidate, onClose, onFlagSuperAdmin, onFlagBan }) {
   );
 }
 
-// HR Final Decision Modal — shown after Super Admin sends their verdict back
 function HRFinalDecisionModal({ alert, onClose, onShortlist, onReject }) {
   const [loading, setLoading] = useState(false);
   const isBanned = alert.title?.toLowerCase().includes("banned") || alert.message?.toLowerCase().includes("banned");
@@ -115,8 +107,6 @@ function HRFinalDecisionModal({ alert, onClose, onShortlist, onReject }) {
           <span className="modal-title">📋 Super Admin Decision Received</span>
           <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
         </div>
-
-        {/* SA Decision summary */}
         <div style={{
           background: isBanned ? "#FEF2F2" : "#F0FDF4",
           border: `1px solid ${isBanned ? "#FECACA" : "#BBF7D0"}`,
@@ -130,35 +120,26 @@ function HRFinalDecisionModal({ alert, onClose, onShortlist, onReject }) {
             <strong>Super Admin note:</strong> {alert.message || "No note provided."}
           </div>
         </div>
-
-        {/* HR makes final hiring decision */}
         {!isBanned && (
           <div style={{fontSize:13.5, color:"var(--muted)", lineHeight:1.7, marginBottom:20}}>
-            Super Admin has <strong>cleared</strong> this candidate as legitimate. As HR, you now make the <strong>final hiring decision</strong>:
+            Super Admin has <strong>cleared</strong> this candidate. As HR, you now make the <strong>final hiring decision</strong>:
           </div>
         )}
         {isBanned && (
           <div style={{fontSize:13.5, color:"var(--muted)", lineHeight:1.7, marginBottom:20}}>
-            Super Admin has <strong>banned</strong> this candidate. You may still record a final status for your records, or simply dismiss.
+            Super Admin has <strong>banned</strong> this candidate. You may dismiss or record a final status.
           </div>
         )}
-
         <div style={{display:"flex",gap:10,justifyContent:"flex-end",borderTop:"1px solid var(--border)",paddingTop:16}}>
           <button className="btn btn-ghost" onClick={onClose}>Dismiss</button>
           {!isBanned && (
             <>
-              <button className="btn btn-danger" disabled={loading} onClick={()=>handleDecision("reject")}>
-                ✗ Reject
-              </button>
-              <button className="btn btn-success" disabled={loading} onClick={()=>handleDecision("shortlist")}>
-                ✓ Shortlist
-              </button>
+              <button className="btn btn-danger" disabled={loading} onClick={()=>handleDecision("reject")}>✗ Reject</button>
+              <button className="btn btn-success" disabled={loading} onClick={()=>handleDecision("shortlist")}>✓ Shortlist</button>
             </>
           )}
           {isBanned && (
-            <button className="btn btn-outline" style={{color:"var(--red)",borderColor:"var(--red)"}} onClick={onClose}>
-              Acknowledged
-            </button>
+            <button className="btn btn-outline" style={{color:"var(--red)",borderColor:"var(--red)"}} onClick={onClose}>Acknowledged</button>
           )}
         </div>
       </div>
@@ -174,6 +155,63 @@ const alertColors = {
   sa_clear:{ bg:"#F0FDF4", border:"#BBF7D0", icon:"✅", color:"#059669" },
 };
 
+// ── Deep-safe getter: tries every known backend key variation ──
+function extractAnalytics(res) {
+  // res is the raw axios response object
+  // Try res.data, res.data.data, res.data.analytics — all known shapes
+  const candidates = [
+    res?.data?.data,
+    res?.data?.analytics,
+    res?.data,
+    res,
+  ].filter(Boolean);
+
+  for (const d of candidates) {
+    // Skip if it looks like a wrapper with no real fields
+    const total =
+      d.total       ?? d.totalUsers    ?? d.userCount    ??
+      d.users?.total ?? d.users?.count  ?? null;
+
+    if (total !== null && total !== undefined) {
+      const active =
+        d.active      ?? d.activeUsers   ?? d.activeCount  ??
+        d.users?.active ?? 0;
+
+      const avgScore = Math.round(
+        d.avgScore    ?? d.averageScore  ?? d.avg          ??
+        d.atsAvg      ?? d.averageAts    ?? d.users?.avgScore ?? 0
+      );
+
+      const flagged =
+        d.flagged     ?? d.fraudCount    ?? d.flaggedCount ??
+        d.fraud       ?? d.users?.flagged ?? d.users?.fraud ?? 0;
+
+      const highScore =
+        d.highScore   ?? d.high          ?? d.highScorers  ??
+        d.scoreGroups?.high ?? 0;
+
+      const midScore =
+        d.midScore    ?? d.mid           ?? d.midScorers   ??
+        d.scoreGroups?.mid  ?? 0;
+
+      const lowScore =
+        d.lowScore    ?? d.low           ?? d.lowScorers   ??
+        d.scoreGroups?.low  ?? 0;
+
+      const monthly =
+        Array.isArray(d.monthly)              ? d.monthly :
+        Array.isArray(d.monthlyRegistrations) ? d.monthlyRegistrations :
+        Array.isArray(d.registrations)        ? d.registrations :
+        [];
+
+      return { total, active, avgScore, flagged, highScore, midScore, lowScore, monthly };
+    }
+  }
+
+  // Nothing matched — return zeros so UI doesn't break
+  return { total:0, active:0, avgScore:0, flagged:0, highScore:0, midScore:0, lowScore:0, monthly:[] };
+}
+
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
@@ -181,6 +219,7 @@ export default function AdminDashboard() {
   const [candidates, setCandidates] = useState([]);
   const [rankings, setRankings]     = useState([]);
   const [analytics, setAnalytics]   = useState(null);
+  const [analyticsError, setAnalyticsError] = useState(false);
   const [fraudCandidates, setFraudCandidates] = useState([]);
   const [loading, setLoading]       = useState(false);
   const [search, setSearch]         = useState("");
@@ -192,7 +231,7 @@ export default function AdminDashboard() {
   const [modal, setModal]           = useState(null);
   const [addForm, setAddForm]       = useState({name:"",email:"",targetRole:"",notes:""});
   const [fraudModal, setFraudModal]       = useState(null);
-  const [hrFinalModal, setHrFinalModal]   = useState(null); // SA decision → HR final call
+  const [hrFinalModal, setHrFinalModal]   = useState(null);
   const [sidebarOpen, setSidebarOpen]     = useState(false);
   const [alerts, setAlerts]               = useState([]);
   const [unreadCount, setUnreadCount]     = useState(0);
@@ -204,7 +243,6 @@ export default function AdminDashboard() {
     setTimeout(()=>setToast(""), 3500);
   };
 
-  // ── Load Super Admin decision alerts from DB ──────────────────────────────
   const loadSADecisions = useCallback(async () => {
     try {
       const res = await adminAPI.getAlerts();
@@ -223,24 +261,39 @@ export default function AdminDashboard() {
     finally{ setLoading(false); }
   },[statusFilter,search,minScore,maxScore]);
 
-  const loadRankings = async()=>{
-    try{ const{data}=await adminAPI.getRankings(); setRankings(data.rankings); }
-    catch{ showToast("Failed to load rankings","error"); }
-  };
+  const loadAnalytics = useCallback(async () => {
+    setAnalyticsError(false);
+    setAnalytics(null);
 
-  const loadAnalytics = async()=>{
-    try{
-      const{data}=await adminAPI.getAnalytics();
-      setAnalytics(data.analytics);
-      if(data.fraudCandidates) setFraudCandidates(data.fraudCandidates);
-    }catch{ showToast("Failed to load analytics","error"); }
-  };
+    try {
+      const res = await adminAPI.getAnalytics();
 
-  // ── Build alert list from all data sources ────────────────────────────────
+      // Log the raw response so you can inspect it in DevTools if needed
+      console.log("📊 Raw analytics response:", JSON.stringify(res?.data, null, 2));
+
+      const normalised = extractAnalytics(res);
+
+      console.log("📊 Normalised analytics:", normalised);
+
+      setAnalytics(normalised);
+
+      // Also extract fraudCandidates if present anywhere in the response
+      const d = res?.data?.data || res?.data || {};
+      if (Array.isArray(d.fraudCandidates)) {
+        setFraudCandidates(d.fraudCandidates);
+      }
+
+    } catch (err) {
+      console.error("❌ Analytics load failed:", err);
+      setAnalyticsError(true);
+      setAnalytics(null);
+      showToast("Failed to load analytics", "error");
+    }
+  }, []);
+
   const buildAlerts = useCallback((rankList, fraudList, saDecisionList=[]) => {
     const list = [];
 
-    // 1. Super Admin decisions — shown prominently so HR can take final action
     (saDecisionList || []).forEach(a => {
       const isBan = a.title?.toLowerCase().includes("banned") || a.message?.toLowerCase().includes("banned");
       list.push({
@@ -252,14 +305,12 @@ export default function AdminDashboard() {
         read:      a.isRead || false,
         dbAlertId: a._id,
         targetUser: a.targetUser || null,
-        // HR must take final shortlist/reject action (only relevant if cleared)
         requiresHRAction: !isBan,
         isBan,
         rawAlert:  a,
       });
     });
 
-    // 2. Fraud candidates waiting to be escalated
     fraudList.forEach(u => {
       list.push({
         id:        "fraud_"+u._id,
@@ -273,7 +324,6 @@ export default function AdminDashboard() {
       });
     });
 
-    // 3. High scorers
     const high = rankList.filter(u => u.lastAtsScore >= 85 && u.status !== "Shortlisted" && u.status !== "Rejected");
     if (high.length > 0) {
       list.push({
@@ -284,7 +334,6 @@ export default function AdminDashboard() {
       });
     }
 
-    // 4. New candidates
     const newC = rankList.filter(u => u.status === "New");
     if (newC.length > 0) {
       list.push({
@@ -295,7 +344,6 @@ export default function AdminDashboard() {
       });
     }
 
-    // 5. Shortlisted summary
     const shortlisted = rankList.filter(u => u.status === "Shortlisted");
     if (shortlisted.length > 0) {
       list.push({
@@ -314,30 +362,38 @@ export default function AdminDashboard() {
     setUnreadCount(list.filter(a => !a.read).length);
   }, []);
 
-  // ── Initial load + polling for SA decisions ───────────────────────────────
+  const rankingsRef = React.useRef(rankings);
+  const fraudRef    = React.useRef(fraudCandidates);
+  useEffect(() => { rankingsRef.current = rankings; }, [rankings]);
+  useEffect(() => { fraudRef.current = fraudCandidates; }, [fraudCandidates]);
+
   useEffect(() => {
     const init = async () => {
       await loadRankings();
       await loadAnalytics();
       const decisions = await loadSADecisions();
-      buildAlerts(rankings, fraudCandidates, decisions);
+      buildAlerts(rankingsRef.current, fraudRef.current, decisions);
     };
-  
     init();
-  
     const interval = setInterval(async () => {
       const decisions = await loadSADecisions();
-      buildAlerts(rankings, fraudCandidates, decisions);
+      buildAlerts(rankingsRef.current, fraudRef.current, decisions);
     }, 30000);
-  
     return () => clearInterval(interval);
-  }, [loadSADecisions]);
+  }, [loadSADecisions, loadAnalytics, buildAlerts]);
 
   useEffect(()=>{ if(tab==="candidates") loadCandidates(); },[tab,loadCandidates]);
+  useEffect(() => { if (tab === "analytics") loadAnalytics(); }, [tab, loadAnalytics]);
+
   useEffect(() => {
     buildAlerts(rankings, fraudCandidates, saDecisions);
-  }, [rankings, fraudCandidates, saDecisions]);
-  // ── Actions ───────────────────────────────────────────────────────────────
+  }, [rankings, fraudCandidates, saDecisions, buildAlerts]);
+
+  const loadRankings = async()=>{
+    try{ const{data}=await adminAPI.getRankings(); setRankings(data.rankings); }
+    catch{ showToast("Failed to load rankings","error"); }
+  };
+
   const handleStatusChange = async(id, status, extra={}) => {
     try{
       const res = await adminAPI.updateStatus(id, { status, ...extra });
@@ -352,18 +408,12 @@ export default function AdminDashboard() {
   const handleFlagSuperAdmin = async (id, reason) => {
     try {
       await adminAPI.flagForSuperAdmin(id, { reason });
-  
       showToast("🔔 Escalated to Super Admin");
-  
-      // ✅ IMPORTANT: refresh everything including alerts
       await loadCandidates();
       await loadRankings();
       await loadAnalytics();
       const decisions = await loadSADecisions();
-  
-      // rebuild alerts immediately
-      buildAlerts(rankings, fraudCandidates, decisions);
-  
+      buildAlerts(rankingsRef.current, fraudRef.current, decisions);
     } catch {
       showToast("Action failed", "error");
     }
@@ -372,16 +422,12 @@ export default function AdminDashboard() {
   const handleFlagBan = async (id, reason) => {
     try {
       await adminAPI.flagRemove(id, { reason });
-  
       showToast("🚫 Candidate removed");
-  
       await loadCandidates();
       await loadRankings();
       await loadAnalytics();
       const decisions = await loadSADecisions();
-  
-      buildAlerts(rankings, fraudCandidates, decisions);
-  
+      buildAlerts(rankingsRef.current, fraudRef.current, decisions);
     } catch {
       showToast("Action failed", "error");
     }
@@ -409,7 +455,6 @@ export default function AdminDashboard() {
     }catch(err){ showToast(err.response?.data?.message||"Failed","error"); }
   };
 
-  // Mark SA decision alert as read in DB
   const markSAAlertRead = async (dbAlertId) => {
     try { await adminAPI.markAlertRead(dbAlertId); } catch {}
     setSaDecisions(prev => prev.map(a => a._id === dbAlertId ? {...a, isRead:true} : a));
@@ -426,14 +471,17 @@ export default function AdminDashboard() {
     b.download="candidates.csv"; b.click();
   };
 
-  // computed
   const pieData = analytics ? [
-    {name:"High (80+)",  value:analytics.highScore||0,  color:"#059669"},
-    {name:"Mid (60-79)", value:analytics.midScore||0,   color:"#1B5EEA"},
-    {name:"Low (<60)",   value:analytics.lowScore||0,   color:"#D97706"},
-    {name:"Fraud",       value:analytics.flagged||0,    color:"#DC2626"},
-  ].filter(p=>p.value>0) : [];
-  const barData = analytics?.monthly?.map(m=>({name:MONTHS[m._id.month-1], count:m.count}))||[];
+    {name:"High (80+)",  value: analytics.highScore, color:"#059669"},
+    {name:"Mid (60-79)", value: analytics.midScore,  color:"#1B5EEA"},
+    {name:"Low (<60)",   value: analytics.lowScore,  color:"#D97706"},
+    {name:"Fraud",       value: analytics.flagged,   color:"#DC2626"},
+  ].filter(p => p.value > 0) : [];
+
+  const barData = analytics?.monthly?.map(m=>({
+    name:  MONTHS[((m._id?.month ?? m.month ?? m._id ?? 1) - 1 + 12) % 12],
+    count: m.count ?? m.total ?? m.value ?? 0,
+  })) || [];
 
   const filteredCandidates = candidates.filter(c=>{
     const ms = statusFilter==="all" || c.status===statusFilter || (statusFilter==="Flagged"&&c.isFraudFlagged);
@@ -665,15 +713,23 @@ export default function AdminDashboard() {
           )}
 
           {/* ── ANALYTICS ── */}
-          {tab==="analytics"&&(
-            analytics?(
+          {tab==="analytics" && (
+            analyticsError ? (
+              <div style={{textAlign:"center",padding:60}}>
+                <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+                <p style={{color:"var(--muted)",marginBottom:16}}>Failed to load analytics.</p>
+                <button className="btn btn-primary" onClick={loadAnalytics}>↺ Retry</button>
+              </div>
+            ) : !analytics ? (
+              <div style={{textAlign:"center",padding:60}}><div className="spinner" style={{margin:"0 auto"}}></div></div>
+            ) : (
               <>
                 <div className="metrics-grid">
                   {[
-                    ["Total Users", analytics.users?.total||analytics.total||0, "Registered",""],
-                    ["Active",      analytics.users?.active||analytics.active||0,"Active now","mc-up"],
-                    ["Avg ATS",     analytics.avgScore||0,     "Platform avg",""],
-                    ["Fraud Flagged",analytics.users?.fraud||analytics.flagged||0,"By HR","mc-dn"],
+                    ["Total Users",   analytics.total,    "Registered", ""],
+                    ["Active",        analytics.active,   "Active now",  "mc-up"],
+                    ["Avg ATS",       analytics.avgScore, "Platform avg",""],
+                    ["Fraud Flagged", analytics.flagged,  "By HR",       "mc-dn"],
                   ].map(([l,v,s,cls])=>(
                     <div className="mc" key={l}><div className="mc-label">{l}</div>
                       <div className="mc-value" style={{color:cls==="mc-dn"&&v>0?"var(--red)":undefined}}>{v}</div>
@@ -683,20 +739,24 @@ export default function AdminDashboard() {
                 <div className="grid-2">
                   <div className="card">
                     <div className="card-hd"><span className="card-title">ATS Score Distribution</span></div>
-                    <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
-                      <ResponsiveContainer width={180} height={180}>
-                        <PieChart><Pie data={pieData} cx={85} cy={85} innerRadius={48} outerRadius={78} dataKey="value" paddingAngle={3}>
-                          {pieData.map((e,i)=><Cell key={i} fill={e.color}/>)}</Pie><Tooltip/></PieChart>
-                      </ResponsiveContainer>
-                      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                        {pieData.map(p=>(
-                          <div key={p.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                            <div style={{width:10,height:10,borderRadius:"50%",background:p.color,flexShrink:0}}></div>
-                            {p.name} — <strong>{p.value}</strong>
-                          </div>
-                        ))}
+                    {pieData.length > 0 ? (
+                      <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+                        <ResponsiveContainer width={180} height={180}>
+                          <PieChart><Pie data={pieData} cx={85} cy={85} innerRadius={48} outerRadius={78} dataKey="value" paddingAngle={3}>
+                            {pieData.map((e,i)=><Cell key={i} fill={e.color}/>)}</Pie><Tooltip/></PieChart>
+                        </ResponsiveContainer>
+                        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                          {pieData.map(p=>(
+                            <div key={p.name} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                              <div style={{width:10,height:10,borderRadius:"50%",background:p.color,flexShrink:0}}></div>
+                              {p.name} — <strong>{p.value}</strong>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div style={{textAlign:"center",padding:40,color:"var(--muted)"}}>No score data yet</div>
+                    )}
                   </div>
                   <div className="card">
                     <div className="card-hd"><span className="card-title">Monthly Registrations</span></div>
@@ -709,11 +769,21 @@ export default function AdminDashboard() {
                           <Tooltip/><Bar dataKey="count" fill="var(--blue)" radius={[4,4,0,0]}/>
                         </BarChart>
                       </ResponsiveContainer>
-                    ):<div style={{textAlign:"center",padding:40,color:"var(--muted)"}}>No data yet</div>}
+                    ):<div style={{textAlign:"center",padding:40,color:"var(--muted)"}}>No registration data yet</div>}
                   </div>
                 </div>
+
+                {/* ── Debug panel: only visible in development ── */}
+                {process.env.NODE_ENV === "development" && (
+                  <details style={{marginTop:20,fontSize:12,color:"var(--muted)"}}>
+                    <summary style={{cursor:"pointer",fontWeight:600}}>🛠 Raw Analytics Debug</summary>
+                    <pre style={{background:"var(--bg)",padding:12,borderRadius:8,overflow:"auto",marginTop:8}}>
+                      {JSON.stringify(analytics, null, 2)}
+                    </pre>
+                  </details>
+                )}
               </>
-            ):<div style={{textAlign:"center",padding:60}}><div className="spinner" style={{margin:"0 auto"}}></div></div>
+            )
           )}
 
           {/* ── ALERTS ── */}
@@ -763,11 +833,7 @@ export default function AdminDashboard() {
                             <span style={{fontSize:12,color:"var(--muted)",flexShrink:0}}>{alert.time}</span>
                           </div>
                           <div style={{fontSize:13.5,color:"var(--text)",marginBottom:14,lineHeight:1.6}}>{alert.message}</div>
-
-                          {/* ── Alert-specific action buttons ── */}
                           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-
-                            {/* Fraud alert: let HR escalate */}
                             {alert.type==="fraud" && alert.candidate && (
                               <>
                                 <button className="btn btn-sm"
@@ -781,12 +847,9 @@ export default function AdminDashboard() {
                                 </button>
                               </>
                             )}
-
-                            {/* Super Admin decision: HR takes final action */}
                             {(alert.type==="sa_ban" || alert.type==="sa_clear") && (
                               <>
-                                <button className="btn btn-sm btn-primary"
-                                  style={{fontWeight:700}}
+                                <button className="btn btn-sm btn-primary" style={{fontWeight:700}}
                                   onClick={()=>{
                                     markRead(alert.id);
                                     if (alert.dbAlertId) markSAAlertRead(alert.dbAlertId);
@@ -795,13 +858,10 @@ export default function AdminDashboard() {
                                   📋 Take Final Decision
                                 </button>
                                 {!alert.read && (
-                                  <span style={{fontSize:12,color:"#B91C1C",fontWeight:600,alignSelf:"center"}}>
-                                    ← Action required
-                                  </span>
+                                  <span style={{fontSize:12,color:"#B91C1C",fontWeight:600,alignSelf:"center"}}>← Action required</span>
                                 )}
                               </>
                             )}
-
                             {alert.actions?.includes("go_rankings") && (
                               <button className="btn btn-sm btn-success"
                                 onClick={()=>{ markRead(alert.id); setTab("rankings"); }}>
@@ -814,7 +874,6 @@ export default function AdminDashboard() {
                                 Review Candidates →
                               </button>
                             )}
-
                             {!alert.read && (
                               <button className="btn btn-sm btn-ghost" onClick={()=>markRead(alert.id)}>Mark read</button>
                             )}
@@ -829,7 +888,6 @@ export default function AdminDashboard() {
                 </div>
               )}
 
-              {/* Quick stats */}
               {alerts.length > 0 && (
                 <div className="card" style={{marginTop:20}}>
                   <div className="card-hd"><span className="card-title">Quick Stats</span></div>
@@ -855,7 +913,6 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* ── Fraud escalation modal ── */}
       {fraudModal && (
         <FraudDetailModal
           candidate={fraudModal}
@@ -865,7 +922,6 @@ export default function AdminDashboard() {
         />
       )}
 
-      {/* ── HR Final Decision modal (after SA verdict) ── */}
       {hrFinalModal && (
         <HRFinalDecisionModal
           alert={hrFinalModal}
@@ -875,7 +931,6 @@ export default function AdminDashboard() {
         />
       )}
 
-      {/* ── Add candidate modal ── */}
       {modal==="add" && (
         <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setModal(null)}}>
           <div className="modal-box">
@@ -898,7 +953,6 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ── Detail modal ── */}
       {detailModal && (
         <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setDetailModal(null);}}>
           <div className="modal-box" style={{maxWidth:480}}>

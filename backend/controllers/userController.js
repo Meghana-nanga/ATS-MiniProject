@@ -13,7 +13,7 @@ const { analyzeResume }       = require("../services/atsService");
 const { analyzeVideo }        = require("../services/videoAnalysisService");
 
 const Application = require("../models/Application");
-const User = require("../models/User");
+//const User = require("../models/User");
 
 exports.applyToHR = async (req, res) => {
   try {

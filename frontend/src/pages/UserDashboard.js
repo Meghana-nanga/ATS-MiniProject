@@ -8,31 +8,348 @@ function initials(n=""){ return n.split(" ").map(w=>w[0]).join("").toUpperCase()
 function scColor(s){ return s>=80?"#059669":s>=60?"#1B5EEA":s>=40?"#D97706":"#DC2626"; }
 
 const ROLE_SKILLS = {
-  "ai engineer":          ["python","tensorflow","pytorch","keras","scikit-learn","numpy","pandas","machine learning","deep learning","nlp"],
-  "ml engineer":          ["python","tensorflow","pytorch","keras","scikit-learn","numpy","pandas","machine learning","deep learning","nlp"],
-  "machine learning":     ["python","tensorflow","pytorch","keras","scikit-learn","numpy","pandas","machine learning","deep learning"],
-  "data scientist":       ["python","pandas","numpy","scikit-learn","machine learning","sql","tensorflow","statistics","matplotlib"],
-  "data analyst":         ["sql","python","pandas","excel","tableau","analytics","statistics","mysql","postgresql","power bi"],
-  "frontend engineer":    ["react","javascript","typescript","html","css","webpack","redux","nextjs","tailwind","git"],
-  "frontend developer":   ["react","javascript","typescript","html","css","webpack","redux","nextjs","tailwind","git"],
-  "backend engineer":     ["nodejs","express","python","sql","mongodb","postgresql","rest","api","docker","git"],
-  "backend developer":    ["nodejs","express","python","sql","mongodb","postgresql","rest","api","docker","git"],
-  "full stack":           ["react","nodejs","javascript","html","css","mongodb","sql","git","rest","api","docker"],
-  "fullstack":            ["react","nodejs","javascript","html","css","mongodb","sql","git","rest","api","docker"],
-  "devops engineer":      ["docker","kubernetes","aws","linux","terraform","ansible","jenkins","cicd","bash","git"],
-  "cloud engineer":       ["aws","gcp","azure","docker","kubernetes","terraform","linux","cicd","git"],
-  "software engineer":    ["python","javascript","git","sql","rest","api","linux","nodejs","docker","testing"],
-  "java developer":       ["java","spring","sql","git","rest","docker","junit","maven","hibernate"],
-  "python developer":     ["python","django","flask","sql","git","rest","docker","pandas","pytest"],
-  "mobile developer":     ["react native","flutter","swift","kotlin","android","ios","git","firebase"],
-  "android developer":    ["kotlin","android","java","git","firebase","rest","jetpack"],
-  "ios developer":        ["swift","ios","xcode","git","rest","firebase","objective-c"],
-  "ui ux":                ["figma","css","html","javascript","react","tailwind","sass","adobe xd"],
-  "product manager":      ["agile","scrum","jira","analytics","communication","leadership","kanban","roadmapping"],
-  "qa engineer":          ["selenium","jest","cypress","testing","tdd","python","javascript","git","postman"],
-  "cybersecurity":        ["linux","networking","python","bash","firewalls","encryption","penetration testing","git"],
-  "blockchain":           ["solidity","ethereum","web3","javascript","nodejs","smart contracts","git"],
+
+  // ─── AI / ML ─────────────────────────────────────────────────────────────
+  "ai engineer": [
+    "python","pytorch","tensorflow","keras","scikit-learn","hugging face","langchain",
+    "llm fine-tuning","rag","vector databases","openai api","fastapi","docker","mlops",
+    "prompt engineering","numpy","pandas","cuda"
+  ],
+  "ml engineer": [
+    "python","pytorch","tensorflow","scikit-learn","mlflow","kubeflow","feature engineering",
+    "model deployment","docker","kubernetes","spark","airflow","numpy","pandas","sql",
+    "a/b testing","data pipelines"
+  ],
+  "nlp engineer": [
+    "python","pytorch","transformers","hugging face","spacy","nltk","bert","gpt",
+    "text classification","ner","sentiment analysis","langchain","vector databases","fastapi","docker"
+  ],
+  "computer vision engineer": [
+    "python","opencv","pytorch","tensorflow","yolo","cnn","image segmentation",
+    "object detection","mediapipe","cuda","docker","onnx","numpy","matplotlib"
+  ],
+  "data scientist": [
+    "python","pandas","numpy","scikit-learn","machine learning","sql","tensorflow",
+    "statistics","matplotlib","seaborn","jupyter","r","hypothesis testing",
+    "feature engineering","mlflow"
+  ],
+
+  // ─── Data ─────────────────────────────────────────────────────────────────
+  "data analyst": [
+    "sql","python","pandas","excel","tableau","power bi","analytics","statistics",
+    "mysql","postgresql","looker","dbt","google analytics","data visualization","bigquery"
+  ],
+  "data engineer": [
+    "python","apache spark","hadoop","airflow","kafka","sql","postgresql","aws","gcp",
+    "dbt","snowflake","databricks","etl","scala","docker","kubernetes","bigquery"
+  ],
+  "analytics engineer": [
+    "dbt","sql","python","snowflake","bigquery","redshift","data modeling",
+    "airflow","looker","tableau","git","etl","data warehousing"
+  ],
+  "business intelligence developer": [
+    "sql","tableau","power bi","looker","dbt","excel","python","data modeling",
+    "etl","snowflake","bigquery","redshift","analytics","reporting","dag design"
+  ],
+  "database administrator": [
+    "postgresql","mysql","oracle","sql server","query optimization","indexing",
+    "replication","backup & recovery","performance tuning","high availability",
+    "security","mongodb","redis","partitioning"
+  ],
+
+  // ─── Frontend ─────────────────────────────────────────────────────────────
+  "frontend engineer": [
+    "react","javascript","typescript","html","css","webpack","redux","next.js",
+    "tailwind","git","vite","jest","accessibility","web performance","figma"
+  ],
+  "react developer": [
+    "react","javascript","typescript","redux","next.js","react query","styled-components",
+    "tailwind","webpack","vite","jest","testing-library","git","graphql"
+  ],
+  "vue developer": [
+    "vue.js","javascript","typescript","vuex","pinia","nuxt.js","vite","tailwind",
+    "css","html","jest","git","graphql","axios"
+  ],
+  "angular developer": [
+    "angular","typescript","rxjs","ngrx","html","css","sass","webpack",
+    "karma","jasmine","git","rest api","graphql"
+  ],
+
+  // ─── Backend ──────────────────────────────────────────────────────────────
+  "backend engineer": [
+    "nodejs","express","python","sql","mongodb","postgresql","rest api","docker",
+    "git","redis","kafka","rabbitmq","microservices","authentication","testing"
+  ],
+  "nodejs developer": [
+    "nodejs","express","fastify","javascript","typescript","mongodb","postgresql",
+    "redis","rest api","graphql","docker","jest","kafka","git","jwt"
+  ],
+  "python developer": [
+    "python","django","flask","fastapi","sql","postgresql","redis","docker",
+    "celery","rest api","pytest","git","aws","graphql"
+  ],
+  "java developer": [
+    "java","spring boot","spring mvc","hibernate","jpa","sql","maven","gradle",
+    "junit","docker","kafka","rest api","git","microservices"
+  ],
+  "go developer": [
+    "go","gin","echo","grpc","postgresql","redis","docker","kubernetes",
+    "rest api","microservices","git","kafka","prometheus","grafana"
+  ],
+  "rust developer": [
+    "rust","tokio","actix-web","cargo","webassembly","postgresql","grpc",
+    "docker","git","systems programming","memory safety","concurrency"
+  ],
+  "php developer": [
+    "php","laravel","symfony","mysql","postgresql","composer","rest api",
+    "docker","git","redis","tdd","blade","eloquent"
+  ],
+  "ruby developer": [
+    "ruby","rails","postgresql","redis","sidekiq","rspec","minitest",
+    "rest api","docker","git","heroku","hotwire","activerecord"
+  ],
+  "dotnet developer": [
+    "c#",".net core","asp.net","entity framework","sql server","azure",
+    "rest api","docker","git","xunit","dependency injection","linq","blazor"
+  ],
+  "scala developer": [
+    "scala","akka","spark","kafka","functional programming","sbt",
+    "postgresql","docker","git","grpc","cats","zio"
+  ],
+
+  // ─── Full Stack ───────────────────────────────────────────────────────────
+  "full stack engineer": [
+    "react","nodejs","typescript","postgresql","mongodb","docker","git",
+    "rest api","graphql","redis","aws","tailwind","next.js","testing"
+  ],
+  "mern stack developer": [
+    "mongodb","express","react","nodejs","javascript","typescript","rest api",
+    "docker","git","jwt","mongoose","redux","tailwind"
+  ],
+  "mean stack developer": [
+    "mongodb","express","angular","nodejs","typescript","rest api",
+    "docker","git","jwt","mongoose","html","css","jest"
+  ],
+
+  // ─── DevOps / Cloud ───────────────────────────────────────────────────────
+  "devops engineer": [
+    "linux basics","git & github","docker","kubernetes","ci/cd pipelines",
+    "jenkins","github actions","gitlab ci","terraform","ansible","aws",
+    "bash scripting","prometheus","grafana","helm","nginx","monitoring & alerting",
+    "infrastructure as code","secrets management","vault"
+  ],
+  "cloud engineer": [
+    "aws","gcp","azure","docker","kubernetes","terraform","ansible","linux",
+    "ci/cd","iam","vpc","cloudformation","helm","bash","python",
+    "cost optimization","cloud security","networking"
+  ],
+  "aws solutions architect": [
+    "aws ec2","aws s3","aws lambda","aws rds","aws vpc","cloudformation",
+    "terraform","iam","route 53","cloudwatch","elastic load balancing",
+    "aws ecs","eks","cost optimization","well-architected framework",
+    "aws cloudfront","sqs","sns"
+  ],
+  "gcp engineer": [
+    "google compute engine","gke","cloud run","bigquery","cloud storage",
+    "pub/sub","terraform","kubernetes","cloud build","iam","firebase",
+    "dataflow","cloud functions","vertex ai"
+  ],
+  "azure engineer": [
+    "azure virtual machines","azure devops","aks","azure functions",
+    "azure sql","cosmos db","arm templates","bicep","terraform",
+    "active directory","azure monitor","logic apps","azure service bus"
+  ],
+  "site reliability engineer": [
+    "linux","kubernetes","docker","prometheus","grafana","terraform",
+    "python","go","incident management","slos/slas","chaos engineering",
+    "ci/cd","helm","elk stack","bash","on-call practices"
+  ],
+  "platform engineer": [
+    "kubernetes","helm","terraform","docker","ci/cd","github actions",
+    "python","go","prometheus","grafana","vault","service mesh",
+    "istio","argocd","backstage","internal developer platform"
+  ],
+
+  // ─── Mobile ───────────────────────────────────────────────────────────────
+  "android developer": [
+    "kotlin","android sdk","jetpack compose","room","retrofit","coroutines",
+    "mvvm","hilt","firebase","rest api","git","material design","gradle","junit"
+  ],
+  "ios developer": [
+    "swift","swiftui","uikit","xcode","combine","core data","rest api",
+    "firebase","git","cocoapods","spm","mvvm","instruments","testflight","objective-c"
+  ],
+  "react native developer": [
+    "react native","javascript","typescript","expo","redux","react navigation",
+    "firebase","rest api","git","ios","android","native modules","jest"
+  ],
+  "flutter developer": [
+    "flutter","dart","bloc","provider","riverpod","firebase","rest api",
+    "git","material design","ios","android","hive","go router","unit testing"
+  ],
+
+  // ─── Security ─────────────────────────────────────────────────────────────
+  "cybersecurity analyst": [
+    "networking","linux","firewalls","ids/ips","siem","vulnerability assessment",
+    "incident response","python","bash","tcp/ip","wireshark","nmap",
+    "owasp","splunk","threat hunting","log analysis","soc operations"
+  ],
+  "penetration tester": [
+    "kali linux","metasploit","burp suite","nmap","python","bash","owasp",
+    "web app testing","network penetration","social engineering",
+    "exploit development","ctf","wireshark","reporting","post-exploitation"
+  ],
+  "security engineer": [
+    "linux","python","siem","devsecops","iam","zero trust","cryptography",
+    "oauth","saml","container security","kubernetes security","terraform",
+    "ci/cd security","threat modeling","soc 2","iso 27001"
+  ],
+  "cloud security engineer": [
+    "aws security","azure security","gcp security","iam","zero trust","cspm",
+    "terraform","siem","container security","devsecops","encryption",
+    "compliance","waf","vulnerability management","shift-left security"
+  ],
+  "application security engineer": [
+    "sast","dast","owasp top 10","secure sdlc","burp suite","python",
+    "threat modeling","code review","api security","dependency scanning",
+    "ci/cd security","penetration testing","jwt","oauth","cryptography"
+  ],
+
+  // ─── Design ───────────────────────────────────────────────────────────────
+  "ui/ux designer": [
+    "figma","user research","wireframing","prototyping","design systems",
+    "usability testing","information architecture","adobe xd","css",
+    "html","accessibility","interaction design","sketch"
+  ],
+  "product designer": [
+    "figma","user research","design thinking","wireframing","prototyping",
+    "design systems","usability testing","data-driven design","css",
+    "accessibility","collaboration","sketch","motion design"
+  ],
+  "motion designer": [
+    "after effects","figma","lottie","css animations","javascript",
+    "principle","spline","blender","svg animation","gsap","cinema 4d","adobe illustrator"
+  ],
+
+  // ─── Salesforce ───────────────────────────────────────────────────────────
+  "salesforce developer": [
+    "apex","lwc (lightning web components)","soql","sosl","salesforce flows",
+    "visualforce","rest api","salesforce cpq","salesforce dx","git",
+    "integration patterns","triggers","batch apex","omnistudio","mulesoft"
+  ],
+  "salesforce admin": [
+    "salesforce configuration","flows","process builder","reports & dashboards",
+    "data management","salesforce security","user management","service cloud",
+    "sales cloud","marketing cloud","validation rules","approval processes"
+  ],
+  "salesforce architect": [
+    "apex","lwc","integration architecture","mulesoft","heroku",
+    "salesforce data cloud","experience cloud","event-driven architecture",
+    "soql optimization","salesforce well-architected framework","security architecture"
+  ],
+
+  // ─── Blockchain / Web3 ────────────────────────────────────────────────────
+  "blockchain developer": [
+    "solidity","ethereum","web3.js","ethers.js","hardhat","foundry","smart contracts",
+    "defi","nft","ipfs","nodejs","javascript","gas optimization","security auditing","chainlink"
+  ],
+  "web3 frontend developer": [
+    "react","wagmi","ethers.js","web3.js","typescript","next.js","metamask integration",
+    "ipfs","tailwind","git","smart contract interaction","wallet connect"
+  ],
+
+  // ─── Systems / Hardware ───────────────────────────────────────────────────
+  "embedded systems engineer": [
+    "c","c++","rtos","arm cortex","uart/spi/i2c","linux kernel","assembly",
+    "circuit design","oscilloscope","cmake","gdb","power management","can bus","iot protocols"
+  ],
+  "firmware engineer": [
+    "c","c++","rtos","arm","bare metal programming","bootloaders","device drivers",
+    "jtag/swd","cmake","ci/cd","unit testing","usb","bluetooth","wifi","ota updates"
+  ],
+  "iot engineer": [
+    "c","c++","python","mqtt","aws iot","azure iot","rtos","raspberry pi",
+    "arduino","modbus","lorawan","bluetooth","wifi","docker","security","edge computing"
+  ],
+
+  // ─── Gaming ───────────────────────────────────────────────────────────────
+  "game developer": [
+    "unity","c#","unreal engine","c++","gameplay programming","physics simulation",
+    "3d math","shaders","glsl","hlsl","networking","git","profiling","vr/ar","game design patterns"
+  ],
+
+  // ─── QA / Testing ─────────────────────────────────────────────────────────
+  "qa engineer": [
+    "selenium","cypress","playwright","jest","pytest","rest api testing","postman",
+    "performance testing","k6","git","ci/cd","test planning","bdd","cucumber","accessibility testing"
+  ],
+  "sdet": [
+    "python","java","selenium","rest assured","playwright","api automation",
+    "performance testing","ci/cd","docker","git","test architecture","junit","testng","allure"
+  ],
+
+  // ─── Product / Management ─────────────────────────────────────────────────
+  "product manager": [
+    "agile","scrum","jira","product roadmapping","user stories","okrs","analytics",
+    "a/b testing","stakeholder management","figma","sql","data-driven decisions",
+    "go-to-market","kanban","competitive analysis"
+  ],
+  "engineering manager": [
+    "agile","scrum","technical leadership","system design","hiring",
+    "performance reviews","roadmapping","okrs","architecture review",
+    "cross-team collaboration","incident management","mentoring","budget management"
+  ],
+  "scrum master": [
+    "scrum","agile","kanban","jira","confluence","sprint planning","retrospectives",
+    "stakeholder communication","team facilitation","okrs","lean","safe framework"
+  ],
+
+  // ─── Architecture ─────────────────────────────────────────────────────────
+  "solutions architect": [
+    "system design","microservices","api design","cloud architecture","aws","azure","gcp",
+    "event-driven architecture","security","scalability","networking",
+    "database design","documentation","cost optimization"
+  ],
+  "enterprise architect": [
+    "togaf","system design","integration patterns","soa","microservices","cloud migration",
+    "it governance","erp systems","vendor management","roadmapping",
+    "risk management","security architecture"
+  ],
+
+  // ─── ERP / CRM ────────────────────────────────────────────────────────────
+  "sap developer": [
+    "abap","sap fiori","ui5","sap btp","odata","sap s/4hana","bapi/rfc",
+    "smart forms","sap netweaver","sap basis","integration suite","cds views"
+  ],
+  "servicenow developer": [
+    "javascript","servicenow platform","glide api","flow designer","scoped applications",
+    "itsm","cmdb","rest api","service portal","business rules","client scripts","update sets"
+  ],
+  "dynamics 365 developer": [
+    "c#","power platform","power apps","power automate","dataverse","model-driven apps",
+    "azure","rest api","plugin development","javascript","pcf controls","alm"
+  ],
+
+  // ─── Emerging Tech ────────────────────────────────────────────────────────
+  "quantum computing developer": [
+    "qiskit","cirq","quantum gates","quantum algorithms","python","linear algebra",
+    "quantum error correction","azure quantum","ibm quantum","optimization","cryptography"
+  ],
+  "ar/vr developer": [
+    "unity","unreal engine","c#","c++","openxr","webxr","three.js","shader programming",
+    "spatial computing","meta sdk","visionos","arkit","arcore","3d modeling"
+  ],
+  "prompt engineer": [
+    "llm understanding","openai api","anthropic api","langchain","rag","chain-of-thought",
+    "few-shot prompting","python","vector databases","evaluation frameworks","fine-tuning","hugging face"
+  ],
+  "mlops engineer": [
+    "python","mlflow","kubeflow","airflow","docker","kubernetes","aws sagemaker",
+    "azure ml","vertex ai","feature stores","model monitoring","ci/cd","terraform","spark"
+  ],
 };
+
+
 
 function getRequiredSkills(title, jdText) {
   const norm = (title || "").toLowerCase();

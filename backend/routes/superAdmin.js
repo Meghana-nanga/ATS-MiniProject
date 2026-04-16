@@ -1,16 +1,20 @@
+
 const express = require("express");
 const router = express.Router();
-const { superAdminAuth } = require("../middleware/auth");
+const { protect, superadmin } = require("../middleware/auth");
 const User = require("../models/User");
 const Alert = require("../models/Alert");
-const express = require("express");
-const superAdminAuth = require("../middleware/superAdminAuth");
+const superAdminController = require("../controllers/superAdminController");
 
+// All superAdmin routes require login + superadmin role
+router.use(protect, superadmin);
 
-router.get("/alerts", superAdminAuth, async (req, res) => {
+// GET /api/superadmin/alerts
+// Super Admin sees fraud_flag alerts escalated by HR
+router.get("/alerts", async (req, res) => {
   try {
     const alerts = await Alert.find({ type: "fraud_flag" })
-      .populate("targetUser", "name email status fraudReason")
+      .populate("targetUser", "name email status fraudReason lastAtsScore fraudScore")
       .populate("createdBy", "name email")
       .sort({ createdAt: -1 });
 
@@ -19,8 +23,24 @@ router.get("/alerts", superAdminAuth, async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-// POST /api/super-admin/decide/:userId
-router.post("/decide/:userId", superAdminAuth, async (req, res) => {
+
+// PATCH /api/superadmin/alerts/:id/read
+router.patch("/alerts/:id/read", async (req, res) => {
+  try {
+    const alert = await Alert.findByIdAndUpdate(
+      req.params.id,
+      { isRead: true },
+      { new: true }
+    );
+    res.json({ success: true, alert });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/superadmin/decide/:userId
+// Ban or clear a flagged user — creates superadmin_decision alert for HR
+router.post("/decide/:userId", async (req, res) => {
   try {
     const { action, reason } = req.body;
 
@@ -31,18 +51,20 @@ router.post("/decide/:userId", superAdminAuth, async (req, res) => {
 
     if (action === "ban") {
       user.status = "Banned";
+      user.isActive = false;
+      user.isFraudFlagged = true;
     } else if (action === "clear") {
       user.status = "Active";
+      user.isActive = true;
       user.isFraudFlagged = false;
+      user.fraudReason = null;
     }
 
-    // ✅ THIS WAS MISSING
     user.superAdminDecision = action;
     user.superAdminDecidedAt = new Date();
-
     await user.save();
 
-    // ✅ Create decision alert
+    // Create superadmin_decision alert so HR sees it in their dashboard
     await Alert.create({
       type: "superadmin_decision",
       title:
@@ -61,18 +83,16 @@ router.post("/decide/:userId", superAdminAuth, async (req, res) => {
   }
 });
 
-router.patch("/alerts/:id/read", superAdminAuth, async (req, res) => {
-  try {
-    const alert = await Alert.findByIdAndUpdate(
-      req.params.id,
-      { isRead: true },
-      { new: true }
-    );
+// GET /api/superadmin/users
+router.get("/users", superAdminController.getAllUsers);
 
-    res.json({ success: true, alert });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
+// GET /api/superadmin/analytics
+router.get("/analytics", superAdminController.getPlatformAnalytics);
+
+// POST /api/superadmin/users/:id/ban
+router.post("/users/:id/ban", superAdminController.banUser);
+
+// POST /api/superadmin/users/:id/restore
+router.post("/users/:id/restore", superAdminController.restoreUser);
 
 module.exports = router;
